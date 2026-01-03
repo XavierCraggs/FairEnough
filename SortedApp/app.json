@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "SortedApp",
+    "slug": "SortedApp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "sortedapp",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "extra": {
+      "firebaseApiKey": "AIzaSyA8cirLeEwyQ1Fs3jgWEU_pamB0e0lrlGc",
+      "firebaseAuthDomain": "sortedapp-ef7cd.firebaseapp.com",
+      "firebaseProjectId": "sortedapp-ef7cd",
+      "firebaseStorageBucket": "sortedapp-ef7cd.firebasestorage.app",
+      "firebaseMessagingSenderId": "826761278894",
+      "firebaseAppId": "1:826761278894:web:da9002a90871601edec43f"
+    },
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.xavierc.sortedapp"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.xavierc.sortedapp",
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
