@@ -4,7 +4,9 @@ import {
   Alert,
   FlatList,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -370,6 +372,8 @@ export default function ChoresScreen() {
   const renderChoreCard = ({ item }: { item: ChoreData }) => {
     const isPending = item.status === 'pending' || item.status === 'overdue';
     const assignedName = getAssignedName(item.assignedTo);
+    const canComplete =
+      isPending && (item.assignedTo === null || item.assignedTo === user?.uid);
 
     return (
       <View style={styles.choreCard}>
@@ -403,7 +407,7 @@ export default function ChoresScreen() {
 
         {renderLastCompleted(item)}
 
-        {isPending && (
+        {canComplete && (
           <TouchableOpacity
             style={styles.completeButton}
             onPress={() => handleCompleteChore(item)}
@@ -581,7 +585,10 @@ export default function ChoresScreen() {
       onRequestClose={closeModal}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <RNView style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <RNView style={styles.modalContent}>
             <Text style={styles.modalTitle}>
               {editingChore ? 'Edit Chore' : 'Add Chore'}
@@ -706,7 +713,7 @@ export default function ChoresScreen() {
               </TouchableOpacity>
             </RNView>
           </RNView>
-        </RNView>
+        </KeyboardAvoidingView>
       </TouchableWithoutFeedback>
     </Modal>
   );

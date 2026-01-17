@@ -96,7 +96,6 @@ export default function DashboardScreen() {
             totalPoints: data.totalPoints || 0,
           };
         });
-        console.log('Members array updated:', membersList);
         setMembers(membersList);
         setLoadingMembers(false);
       },
@@ -120,7 +119,6 @@ export default function DashboardScreen() {
       try {
         setLoadingFairness(true);
         const fairness = await choreService.calculateHouseFairness(houseId);
-        console.log('Fairness calculation results:', fairness);
         setFairnessData(fairness);
       } catch (error) {
         console.error('Error calculating fairness:', error);

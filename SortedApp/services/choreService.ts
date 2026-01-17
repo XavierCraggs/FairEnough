@@ -178,7 +178,14 @@ import {
           }
   
           const chore = choreDoc.data() as ChoreData;
-  
+
+          if (chore.assignedTo && chore.assignedTo !== userId) {
+            throw this.createError(
+              ChoreServiceErrorCode.UNAUTHORIZED,
+              'You can only complete chores assigned to you.'
+            );
+          }
+
           // Update chore document
           transaction.update(choreRef, {
             status: 'completed',

@@ -51,7 +51,7 @@ export default function TabLayout() {
         name="finance"
         options={{
           title: 'Finance',
-          tabBarIcon: ({ color }) => <TabBarIcon name="dollar-sign" color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="dollar" color={color} />,
         }}
       />
       <Tabs.Screen
