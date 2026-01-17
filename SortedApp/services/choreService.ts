@@ -18,6 +18,7 @@ import {
     Timestamp,
   } from 'firebase/firestore';
   import { db } from '../api/firebase';
+  import notificationService from './notificationService';
   
   /**
    * Chore data structure stored in Firestore
@@ -213,6 +214,16 @@ import {
           } as ChoreData;
         });
   
+        try {
+          await notificationService.sendAlfredNudge(houseId, userId, 'CHORE_DUE', {
+            choreId: choreData.choreId,
+            choreName: choreData.title,
+            action: 'completed',
+          });
+        } catch (notifyError) {
+          console.error('Failed to send chore-completed notification:', notifyError);
+        }
+
         return choreData;
       } catch (error) {
         if (this.isChoreServiceError(error)) {
@@ -258,13 +269,36 @@ import {
           await this.verifyUserInHouse(assignedTo, houseId);
         }
   
-        // Update chore assignment
+        // Fetch chore for notification context
         const choreRef = doc(db, 'houses', houseId, 'chores', choreId);
+        const choreDoc = await getDoc(choreRef);
+        if (!choreDoc.exists()) {
+          throw this.createError(
+            ChoreServiceErrorCode.CHORE_NOT_FOUND,
+            'Chore not found'
+          );
+        }
+        const chore = choreDoc.data() as ChoreData;
+
+        // Update chore assignment
         await updateDoc(choreRef, {
           assignedTo: assignedTo,
           status: 'pending', // Reset status when reassigned
           updatedAt: serverTimestamp(),
         });
+
+        if (assignedTo) {
+          try {
+            await notificationService.sendAlfredNudge(houseId, requestingUserId, 'CHORE_DUE', {
+              choreId,
+              choreName: chore.title,
+              assignedTo,
+              action: 'assigned',
+            });
+          } catch (notifyError) {
+            console.error('Failed to send chore-assigned notification:', notifyError);
+          }
+        }
       } catch (error) {
         if (this.isChoreServiceError(error)) {
           throw error;
@@ -518,16 +552,73 @@ import {
           member.deviation = member.totalPoints - averagePoints;
         });
   
-        return {
-          averagePoints,
-          memberStats,
+      return {
+        averagePoints,
+        memberStats,
+      };
+    } catch (error) {
+      throw this.createError(
+        ChoreServiceErrorCode.UNKNOWN_ERROR,
+        'Failed to calculate house fairness.',
+        error
+      );
+    }
+  }
+
+    async notifyOverdueChores(houseId: string, userId: string): Promise<void> {
+      try {
+        if (!houseId || !userId) {
+          return;
+        }
+
+        const chores = await this.getHouseChores(houseId);
+        const today = new Date();
+        const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+        const isOverdue = (chore: ChoreData) => {
+          if (chore.status === 'completed') {
+            return false;
+          }
+          const lastCompleted = chore.lastCompletedAt?.toDate
+            ? chore.lastCompletedAt.toDate()
+            : null;
+          if (chore.frequency === 'daily') {
+            return !lastCompleted || lastCompleted < startOfToday;
+          }
+          if (chore.frequency === 'weekly') {
+            if (!lastCompleted) return true;
+            const nextDue = new Date(lastCompleted);
+            nextDue.setDate(nextDue.getDate() + 7);
+            return nextDue < startOfToday;
+          }
+          if (chore.frequency === 'one-time') {
+            return chore.status === 'pending';
+          }
+          return false;
         };
+
+        const overdueChores = chores.filter(isOverdue);
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+        for (const chore of overdueChores) {
+          const alreadySent = await notificationService.hasRecentNotification(
+            houseId,
+            'CHORE_DUE',
+            { choreId: chore.choreId },
+            since
+          );
+          if (alreadySent) {
+            continue;
+          }
+
+          await notificationService.sendAlfredNudge(houseId, userId, 'CHORE_DUE', {
+            choreId: chore.choreId,
+            choreName: chore.title,
+            action: 'overdue',
+          });
+        }
       } catch (error) {
-        throw this.createError(
-          ChoreServiceErrorCode.UNKNOWN_ERROR,
-          'Failed to calculate house fairness.',
-          error
-        );
+        console.error('Failed to notify overdue chores:', error);
       }
     }
   

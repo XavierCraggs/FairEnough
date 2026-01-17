@@ -138,7 +138,7 @@ export default function HouseSetupScreen() {
             <View style={styles.alfredBubble}>
               <Text style={styles.alfredText}>Alfred is ready to organize your new home.</Text>
             </View>
-            <FontAwesome name="user-tie" size={20} color={BUTLER_BLUE} style={styles.alfredIcon} />
+            <FontAwesome name="user" size={20} color={BUTLER_BLUE} style={styles.alfredIcon} />
           </View>
         </View>
       </ScrollView>

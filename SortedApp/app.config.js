@@ -40,7 +40,9 @@ module.exports = {
       favicon: "./assets/images/favicon.png"
     },
     plugins: [
-      "expo-router"
+      "expo-router",
+      "@react-native-community/datetimepicker",
+      "expo-notifications"
     ],
     experiments: {
       typedRoutes: true

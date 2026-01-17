@@ -1,8 +1,10 @@
 // contexts/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useRouter, useSegments } from 'expo-router';
+import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { auth, db } from '../api/firebase';
 import { UserData } from '../services/authService';
 
@@ -108,6 +110,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     return unsubscribeProfile;
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const registerForPushNotifications = async () => {
+      try {
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
+        let finalStatus = existingStatus;
+        if (existingStatus !== 'granted') {
+          const { status } = await Notifications.requestPermissionsAsync();
+          finalStatus = status;
+        }
+
+        if (finalStatus !== 'granted') {
+          return;
+        }
+
+        const projectId =
+          Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
+        if (!projectId) {
+          console.warn('Expo push projectId is missing; skipping push token registration.');
+          return;
+        }
+
+        const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
+
+        if (tokenResponse?.data) {
+          await setDoc(
+            doc(db, 'users', user.uid),
+            {
+              expoPushToken: tokenResponse.data,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+      } catch (error) {
+        console.error('Push notification registration failed:', error);
+      }
+    };
+
+    registerForPushNotifications();
   }, [user]);
 
   /**

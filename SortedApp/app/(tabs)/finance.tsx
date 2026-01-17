@@ -85,6 +85,29 @@ export default function FinanceScreen() {
     return 'Just now';
   }, []);
 
+  const getAgeInDays = useCallback((value: any) => {
+    if (!value?.toDate) return 0;
+    const createdAt = value.toDate();
+    const diffMs = Date.now() - createdAt.getTime();
+    return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+  }, []);
+
+  const getUrgencyTone = useCallback(
+    (ageDays: number, confirmed: boolean) => {
+      if (confirmed) {
+        return { label: 'Settled', color: '#166534', background: '#DCFCE7' };
+      }
+      if (ageDays >= 7) {
+        return { label: `Overdue ${ageDays}d`, color: '#B91C1C', background: '#FEE2E2' };
+      }
+      if (ageDays >= 3) {
+        return { label: `Aging ${ageDays}d`, color: '#92400E', background: '#FEF3C7' };
+      }
+      return { label: 'Recent', color: BUTLER_BLUE, background: '#E5E7EB' };
+    },
+    []
+  );
+
   useEffect(() => {
     if (!houseId) {
       setLoading(false);
@@ -403,6 +426,8 @@ export default function FinanceScreen() {
       !!currentUserId && (item.confirmedBy || []).includes(currentUserId);
     const needsUserConfirmation = isUserInSplit && !hasUserConfirmed;
     const isPayer = item.payerId === currentUserId;
+    const ageDays = getAgeInDays(item.createdAt);
+    const urgencyTone = getUrgencyTone(ageDays, isConfirmed);
 
     let badgeLabel = 'Pending';
     let badgeBackground = '#E5E7EB';
@@ -423,7 +448,7 @@ export default function FinanceScreen() {
     }
 
     return (
-      <RNView style={styles.transactionCard}>
+      <RNView style={[styles.transactionCard, { borderLeftColor: urgencyTone.color }]}>
         <RNView style={styles.transactionHeader}>
           <RNView style={{ flex: 1 }}>
             <Text style={styles.transactionTitle}>{item.description}</Text>
@@ -435,6 +460,13 @@ export default function FinanceScreen() {
         </RNView>
 
         <Text style={styles.transactionMeta}>Split with: {splitNames}</Text>
+        <RNView style={styles.urgencyRow}>
+          <RNView style={[styles.urgencyBadge, { backgroundColor: urgencyTone.background }]}>
+            <Text style={[styles.urgencyBadgeText, { color: urgencyTone.color }]}>
+              {urgencyTone.label}
+            </Text>
+          </RNView>
+        </RNView>
 
         <RNView style={styles.transactionFooter}>
           <RNView style={[styles.statusBadge, { backgroundColor: badgeBackground }]}>
@@ -721,6 +753,8 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS,
     padding: 16,
     marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#E5E7EB',
     shadowColor: '#000',
     shadowOpacity: 0.06,
     shadowRadius: 8,
@@ -748,6 +782,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: MUTED_TEXT,
     marginBottom: 4,
+  },
+  urgencyRow: {
+    marginTop: 6,
+  },
+  urgencyBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  urgencyBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   transactionFooter: {
     marginTop: 8,

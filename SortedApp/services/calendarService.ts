@@ -20,6 +20,13 @@ export type RecurrenceFrequency = 'none' | 'daily' | 'weekly' | 'monthly' | 'yea
 export interface RecurrenceRule {
   frequency: RecurrenceFrequency;
   interval: number;
+  endDate: Timestamp | null;
+}
+
+export interface RecurrenceInput {
+  frequency?: RecurrenceFrequency;
+  interval?: number;
+  endDate?: Date | null;
 }
 
 export interface CalendarEventData {
@@ -58,7 +65,7 @@ class CalendarService {
     title: string,
     startDate: Date,
     description?: string,
-    recurrence?: Partial<RecurrenceRule>
+    recurrence?: RecurrenceInput
   ): Promise<CalendarEventData> {
     try {
       if (!houseId || !createdBy) {
@@ -90,6 +97,11 @@ class CalendarService {
         : 'Unknown';
 
       const eventsRef = collection(db, 'houses', houseId, 'events');
+      const endDate =
+        recurrence?.endDate instanceof Date
+          ? Timestamp.fromDate(recurrence.endDate)
+          : null;
+
       const newEvent = {
         houseId,
         title: title.trim(),
@@ -98,6 +110,7 @@ class CalendarService {
         recurrence: {
           frequency: recurrence?.frequency ?? 'none',
           interval: recurrence?.interval ?? 1,
+          endDate,
         },
         createdBy,
         createdByName,
@@ -130,7 +143,7 @@ class CalendarService {
       title: string;
       description?: string;
       startDate: Date;
-      recurrence: RecurrenceRule;
+      recurrence: RecurrenceInput;
     }>,
     userId: string
   ): Promise<void> {
@@ -167,7 +180,15 @@ class CalendarService {
         payload.startDate = Timestamp.fromDate(updates.startDate);
       }
       if (updates.recurrence !== undefined) {
-        payload.recurrence = updates.recurrence;
+        const endDate =
+          updates.recurrence.endDate instanceof Date
+            ? Timestamp.fromDate(updates.recurrence.endDate)
+            : null;
+        payload.recurrence = {
+          frequency: updates.recurrence.frequency ?? 'none',
+          interval: updates.recurrence.interval ?? 1,
+          endDate,
+        };
       }
 
       await updateDoc(eventRef, payload);

@@ -15,13 +15,13 @@ import {
   TouchableWithoutFeedback,
   View as RNView,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '../../contexts/AuthContext';
 import calendarService, {
   CalendarEventData,
   CalendarServiceError,
   RecurrenceFrequency,
-  RecurrenceRule,
 } from '../../services/calendarService';
 
 const BACKGROUND_COLOR = '#F8FAF9';
@@ -59,29 +59,29 @@ const addMonths = (date: Date, months: number) =>
 const addYears = (date: Date, years: number) =>
   new Date(date.getFullYear() + years, date.getMonth(), date.getDate());
 
+const formatReadableDate = (date: Date) => date.toLocaleDateString();
+
 const formatDateInput = (date: Date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
-
-const parseDateInput = (value: string): Date | null => {
-  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(year, month - 1, day);
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
-  }
-  return date;
-};
+const MONTH_LABELS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function CalendarScreen() {
   const { user, userProfile } = useAuth();
@@ -91,13 +91,23 @@ export default function CalendarScreen() {
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
 
   const [modalVisible, setModalVisible] = useState(false);
   const [titleInput, setTitleInput] = useState('');
   const [descriptionInput, setDescriptionInput] = useState('');
-  const [dateInput, setDateInput] = useState(formatDateInput(new Date()));
+  const [selectedDate, setSelectedDate] = useState<Date>(normalizeDate(new Date()));
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [recurrenceInput, setRecurrenceInput] = useState<RecurrenceFrequency>('none');
+  const [endDateEnabled, setEndDateEnabled] = useState(false);
+  const [endDateInput, setEndDateInput] = useState<Date | null>(null);
+  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  const [calendarMonth, setCalendarMonth] = useState<Date>(normalizeDate(new Date()));
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date>(
+    normalizeDate(new Date())
+  );
 
   const isInHouse = !!houseId;
 
@@ -131,8 +141,12 @@ export default function CalendarScreen() {
     }
     setTitleInput('');
     setDescriptionInput('');
-    setDateInput(formatDateInput(new Date()));
+    setSelectedDate(normalizeDate(new Date()));
+    setShowDatePicker(Platform.OS === 'ios');
     setRecurrenceInput('none');
+    setEndDateEnabled(false);
+    setEndDateInput(null);
+    setShowEndDatePicker(false);
     setModalVisible(true);
   };
 
@@ -141,23 +155,39 @@ export default function CalendarScreen() {
     setModalVisible(false);
   };
 
+  const handleDateChange = (_event: any, date?: Date) => {
+    if (Platform.OS !== 'ios') {
+      setShowDatePicker(false);
+    }
+    if (date) {
+      setSelectedDate(normalizeDate(date));
+      if (endDateInput && normalizeDate(date) > normalizeDate(endDateInput)) {
+        setEndDateInput(normalizeDate(date));
+      }
+    }
+  };
+
+  const handleEndDateChange = (_event: any, date?: Date) => {
+    if (Platform.OS !== 'ios') {
+      setShowEndDatePicker(false);
+    }
+    if (date) {
+      const normalized = normalizeDate(date);
+      const eventDate = normalizeDate(selectedDate);
+      setEndDateInput(normalized < eventDate ? eventDate : normalized);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!houseId || !currentUserId) return;
     if (!titleInput.trim()) {
       Alert.alert('Calendar', 'Please enter an event title.');
       return;
     }
-
-    const parsedDate = parseDateInput(dateInput);
-    if (!parsedDate) {
-      Alert.alert('Calendar', 'Use the format YYYY-MM-DD for the date.');
-      return;
-    }
-
-    const recurrence: RecurrenceRule = {
-      frequency: recurrenceInput,
-      interval: 1,
-    };
+    const eventDate = normalizeDate(selectedDate);
+    const endDate =
+      endDateEnabled && endDateInput ? normalizeDate(endDateInput) : null;
+    const safeEndDate = endDate && endDate < eventDate ? eventDate : endDate;
 
     setSubmitting(true);
     try {
@@ -165,9 +195,13 @@ export default function CalendarScreen() {
         houseId,
         currentUserId,
         titleInput,
-        parsedDate,
+        eventDate,
         descriptionInput,
-        recurrence
+        {
+          frequency: recurrenceInput,
+          interval: 1,
+          endDate: safeEndDate,
+        }
       );
       setModalVisible(false);
     } catch (err: any) {
@@ -215,6 +249,22 @@ export default function CalendarScreen() {
     }
   }, [houseId, handleError]);
 
+  const handlePreviousMonth = () => {
+    const previous = addMonths(calendarMonth, -1);
+    setCalendarMonth(previous);
+    setSelectedCalendarDate(new Date(previous.getFullYear(), previous.getMonth(), 1));
+  };
+
+  const handleNextMonth = () => {
+    const next = addMonths(calendarMonth, 1);
+    setCalendarMonth(next);
+    setSelectedCalendarDate(new Date(next.getFullYear(), next.getMonth(), 1));
+  };
+
+  const handleSelectCalendarDate = (date: Date) => {
+    setSelectedCalendarDate(normalizeDate(date));
+  };
+
   const eventOccurrences = useMemo(() => {
     const rangeStart = normalizeDate(new Date());
     const rangeEnd = addDays(rangeStart, UPCOMING_DAYS);
@@ -223,8 +273,17 @@ export default function CalendarScreen() {
 
     events.forEach((event) => {
       const baseDate = normalizeDate(event.startDate.toDate());
-      const recurrence = event.recurrence || { frequency: 'none', interval: 1 };
+      const recurrence = event.recurrence || {
+        frequency: 'none',
+        interval: 1,
+        endDate: null,
+      };
       const interval = Math.max(1, recurrence.interval || 1);
+      const recurrenceEnd = recurrence.endDate?.toDate
+        ? normalizeDate(recurrence.endDate.toDate())
+        : null;
+      const effectiveRangeEnd =
+        recurrenceEnd && recurrenceEnd < rangeEnd ? recurrenceEnd : rangeEnd;
 
       if (recurrence.frequency === 'none') {
         if (baseDate >= rangeStart && baseDate <= rangeEnd) {
@@ -235,6 +294,10 @@ export default function CalendarScreen() {
             isRecurring: false,
           });
         }
+        return;
+      }
+
+      if (recurrenceEnd && recurrenceEnd < rangeStart) {
         return;
       }
 
@@ -258,7 +321,7 @@ export default function CalendarScreen() {
         current = advance(current);
       }
 
-      while (current <= rangeEnd) {
+      while (current <= effectiveRangeEnd) {
         occurrences.push({
           occurrenceId: `${event.eventId}-${formatDateInput(current)}`,
           occurrenceDate: current,
@@ -274,12 +337,51 @@ export default function CalendarScreen() {
     );
   }, [events]);
 
+  const occurrencesByDate = useMemo(() => {
+    const map = new Map<string, EventOccurrence[]>();
+    eventOccurrences.forEach((occurrence) => {
+      const key = formatDateInput(occurrence.occurrenceDate);
+      const existing = map.get(key) || [];
+      map.set(key, [...existing, occurrence]);
+    });
+    return map;
+  }, [eventOccurrences]);
+
+  const calendarDays = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const monthStart = new Date(year, month, 1);
+    const monthEnd = new Date(year, month + 1, 0);
+    const daysInMonth = monthEnd.getDate();
+    const startDayOfWeek = monthStart.getDay();
+
+    const days: Array<Date | null> = [];
+    for (let i = 0; i < startDayOfWeek; i += 1) {
+      days.push(null);
+    }
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      days.push(new Date(year, month, day));
+    }
+
+    const rows: Array<Array<Date | null>> = [];
+    for (let i = 0; i < days.length; i += 7) {
+      rows.push(days.slice(i, i + 7));
+    }
+    return rows;
+  }, [calendarMonth]);
+
+  const selectedDateKey = formatDateInput(selectedCalendarDate);
+  const selectedDateOccurrences = occurrencesByDate.get(selectedDateKey) || [];
+
   const renderOccurrenceCard = ({ item }: { item: EventOccurrence }) => {
     const formattedDate = item.occurrenceDate.toLocaleDateString();
     const recurrenceLabel =
       item.event.recurrence?.frequency && item.event.recurrence.frequency !== 'none'
         ? item.event.recurrence.frequency
         : null;
+    const recurrenceEnd = item.event.recurrence?.endDate?.toDate
+      ? formatReadableDate(item.event.recurrence.endDate.toDate())
+      : null;
 
     return (
       <RNView style={styles.eventCard}>
@@ -291,9 +393,14 @@ export default function CalendarScreen() {
           <Text style={styles.eventDescription}>{item.event.description}</Text>
         )}
         <RNView style={styles.eventMetaRow}>
-          <Text style={styles.eventMetaText}>
-            Created by {item.event.createdByName}
-          </Text>
+          <RNView>
+            <Text style={styles.eventMetaText}>
+              Created by {item.event.createdByName}
+            </Text>
+            {recurrenceEnd && (
+              <Text style={styles.eventMetaText}>Repeats until {recurrenceEnd}</Text>
+            )}
+          </RNView>
           {recurrenceLabel && (
             <RNView style={styles.recurrenceBadge}>
               <Text style={styles.recurrenceBadgeText}>{recurrenceLabel}</Text>
@@ -314,6 +421,72 @@ export default function CalendarScreen() {
     );
   };
 
+  const renderCalendarGrid = () => {
+    const monthLabel = `${MONTH_LABELS[calendarMonth.getMonth()]} ${calendarMonth.getFullYear()}`;
+    return (
+      <RNView style={styles.calendarContainer}>
+        <RNView style={styles.calendarHeaderRow}>
+          <TouchableOpacity style={styles.calendarNavButton} onPress={handlePreviousMonth}>
+            <Text style={styles.calendarNavText}>{'<'}</Text>
+          </TouchableOpacity>
+          <Text style={styles.calendarMonthText}>{monthLabel}</Text>
+          <TouchableOpacity style={styles.calendarNavButton} onPress={handleNextMonth}>
+            <Text style={styles.calendarNavText}>{'>'}</Text>
+          </TouchableOpacity>
+        </RNView>
+        <RNView style={styles.calendarWeekRow}>
+          {WEEKDAY_LABELS.map((label) => (
+            <Text key={label} style={styles.calendarWeekdayText}>
+              {label}
+            </Text>
+          ))}
+        </RNView>
+        {calendarDays.map((week, index) => (
+          <RNView key={`week-${index}`} style={styles.calendarWeekRow}>
+            {week.map((date, dayIndex) => {
+              if (!date) {
+                return <RNView key={`empty-${dayIndex}`} style={styles.calendarDayCell} />;
+              }
+              const key = formatDateInput(date);
+              const eventsForDay = occurrencesByDate.get(key) || [];
+              const isSelected = key === formatDateInput(selectedCalendarDate);
+              const isToday = key === formatDateInput(normalizeDate(new Date()));
+
+              return (
+                <Pressable
+                  key={key}
+                  style={[
+                    styles.calendarDayCell,
+                    isSelected && styles.calendarDaySelected,
+                  ]}
+                  onPress={() => handleSelectCalendarDate(date)}
+                >
+                  <Text
+                    style={[
+                      styles.calendarDayText,
+                      isToday && styles.calendarDayToday,
+                      isSelected && styles.calendarDaySelectedText,
+                    ]}
+                  >
+                    {date.getDate()}
+                  </Text>
+                  <RNView style={styles.calendarDotsRow}>
+                    {eventsForDay.slice(0, 3).map((event, dotIndex) => (
+                      <RNView
+                        key={`${event.occurrenceId}-${dotIndex}`}
+                        style={styles.calendarDot}
+                      />
+                    ))}
+                  </RNView>
+                </Pressable>
+              );
+            })}
+          </RNView>
+        ))}
+      </RNView>
+    );
+  };
+
   const renderEmptyState = () => {
     if (loading) {
       return null;
@@ -328,6 +501,15 @@ export default function CalendarScreen() {
       </RNView>
     );
   };
+
+  const renderSelectedDateEmptyState = () => (
+    <RNView style={styles.emptyStateContainer}>
+      <Text style={styles.emptyStateTitle}>No events this day</Text>
+      <Text style={styles.emptyStateSubtitle}>
+        Try another date or add a new event.
+      </Text>
+    </RNView>
+  );
 
   const renderModal = () => (
     <Modal
@@ -364,13 +546,20 @@ export default function CalendarScreen() {
             />
 
             <Text style={styles.modalLabel}>Date</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={MUTED_TEXT}
-              value={dateInput}
-              onChangeText={setDateInput}
-            />
+            <Pressable
+              style={styles.datePickerButton}
+              onPress={() => setShowDatePicker(true)}
+            >
+              <Text style={styles.datePickerText}>{formatReadableDate(selectedDate)}</Text>
+            </Pressable>
+            {showDatePicker && (
+              <DateTimePicker
+                value={selectedDate}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                onChange={handleDateChange}
+              />
+            )}
 
             <Text style={styles.modalLabel}>Repeat</Text>
             <RNView style={styles.dropdownContainer}>
@@ -394,6 +583,77 @@ export default function CalendarScreen() {
                 </Pressable>
               ))}
             </RNView>
+
+            {recurrenceInput === 'none' ? (
+              <Text style={styles.modalHelperText}>
+                Recurring events can include an end date.
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.modalLabel}>Repeat ends</Text>
+                <RNView style={styles.dropdownContainer}>
+                  <Pressable
+                    style={[
+                      styles.dropdownChip,
+                      !endDateEnabled && styles.dropdownChipActive,
+                    ]}
+                    onPress={() => {
+                      setEndDateEnabled(false);
+                      setEndDateInput(null);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.dropdownChipText,
+                        !endDateEnabled && styles.dropdownChipTextActive,
+                      ]}
+                    >
+                      No end
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.dropdownChip,
+                      endDateEnabled && styles.dropdownChipActive,
+                    ]}
+                    onPress={() => {
+                      setEndDateEnabled(true);
+                      setEndDateInput((current) => current ?? selectedDate);
+                      setShowEndDatePicker(true);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.dropdownChipText,
+                        endDateEnabled && styles.dropdownChipTextActive,
+                      ]}
+                    >
+                      End date
+                    </Text>
+                  </Pressable>
+                </RNView>
+                {endDateEnabled && (
+                  <>
+                    <Pressable
+                      style={styles.datePickerButton}
+                      onPress={() => setShowEndDatePicker(true)}
+                    >
+                      <Text style={styles.datePickerText}>
+                        {endDateInput ? formatReadableDate(endDateInput) : 'Select end date'}
+                      </Text>
+                    </Pressable>
+                    {showEndDatePicker && endDateInput && (
+                      <DateTimePicker
+                        value={endDateInput}
+                        mode="date"
+                        display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                        onChange={handleEndDateChange}
+                      />
+                    )}
+                  </>
+                )}
+              </>
+            )}
 
             <RNView style={styles.modalActionsRow}>
               <TouchableOpacity
@@ -437,30 +697,132 @@ export default function CalendarScreen() {
 
   return (
     <View style={styles.container} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
-      <FlatList
-        data={eventOccurrences}
-        keyExtractor={(item) => item.occurrenceId}
-        contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
-          <RNView>
-            <Text style={styles.title}>Calendar</Text>
-            <Text style={styles.description}>
-              Track shared house events, rent days, and important schedules in one place.
-            </Text>
-            <RNView style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>Upcoming</Text>
-              <Text style={styles.sectionSubtitle}>
-                Next {UPCOMING_DAYS} days of shared events.
+      {viewMode === 'list' ? (
+        <FlatList
+          data={eventOccurrences}
+          keyExtractor={(item) => item.occurrenceId}
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={
+            <RNView>
+              <Text style={styles.title}>Calendar</Text>
+              <Text style={styles.description}>
+                Track shared house events, rent days, and important schedules in one place.
               </Text>
+              <RNView style={styles.toggleRow}>
+                <Pressable
+                  style={[
+                    styles.toggleButton,
+                    viewMode === 'list' && styles.toggleButtonActive,
+                  ]}
+                  onPress={() => setViewMode('list')}
+                >
+                  <Text
+                    style={[
+                      styles.toggleButtonText,
+                      viewMode === 'list' && styles.toggleButtonTextActive,
+                    ]}
+                  >
+                    List
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.toggleButton,
+                    viewMode === 'calendar' && styles.toggleButtonActive,
+                  ]}
+                  onPress={() => setViewMode('calendar')}
+                >
+                  <Text
+                    style={[
+                      styles.toggleButtonText,
+                      viewMode === 'calendar' && styles.toggleButtonTextActive,
+                    ]}
+                  >
+                    Calendar
+                  </Text>
+                </Pressable>
+              </RNView>
+              <RNView style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>Upcoming</Text>
+                <Text style={styles.sectionSubtitle}>
+                  Next {UPCOMING_DAYS} days of shared events.
+                </Text>
+              </RNView>
             </RNView>
-          </RNView>
-        }
-        renderItem={renderOccurrenceCard}
-        ListEmptyComponent={renderEmptyState}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BUTLER_BLUE} />
-        }
-      />
+          }
+          renderItem={renderOccurrenceCard}
+          ListEmptyComponent={renderEmptyState}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BUTLER_BLUE} />
+          }
+        />
+      ) : (
+        <FlatList
+          data={selectedDateOccurrences}
+          keyExtractor={(item) => item.occurrenceId}
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={
+            <RNView>
+              <Text style={styles.title}>Calendar</Text>
+              <Text style={styles.description}>
+                Pick a date to see shared events and schedules.
+              </Text>
+              <RNView style={styles.toggleRow}>
+                <Pressable
+                  style={[
+                    styles.toggleButton,
+                    viewMode === 'list' && styles.toggleButtonActive,
+                  ]}
+                  onPress={() => setViewMode('list')}
+                >
+                  <Text
+                    style={[
+                      styles.toggleButtonText,
+                      viewMode === 'list' && styles.toggleButtonTextActive,
+                    ]}
+                  >
+                    List
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.toggleButton,
+                    viewMode === 'calendar' && styles.toggleButtonActive,
+                  ]}
+                  onPress={() => setViewMode('calendar')}
+                >
+                  <Text
+                    style={[
+                      styles.toggleButtonText,
+                      viewMode === 'calendar' && styles.toggleButtonTextActive,
+                    ]}
+                  >
+                    Calendar
+                  </Text>
+                </Pressable>
+              </RNView>
+              {renderCalendarGrid()}
+              <RNView style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>
+                  Events on {formatReadableDate(selectedCalendarDate)}
+                </Text>
+                <Text style={styles.sectionSubtitle}>
+                  {selectedDateOccurrences.length
+                    ? `${selectedDateOccurrences.length} event${
+                        selectedDateOccurrences.length === 1 ? '' : 's'
+                      }`
+                    : 'No events for this date.'}
+                </Text>
+              </RNView>
+            </RNView>
+          }
+          renderItem={renderOccurrenceCard}
+          ListEmptyComponent={renderSelectedDateEmptyState}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BUTLER_BLUE} />
+          }
+        />
+      )}
 
       <TouchableOpacity style={styles.fab} onPress={openCreateModal}>
         <Text style={styles.fabText}>+</Text>
@@ -496,6 +858,30 @@ const styles = StyleSheet.create({
     color: MUTED_TEXT,
     marginBottom: 20,
   },
+  toggleRow: {
+    flexDirection: 'row',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 999,
+    padding: 4,
+    marginBottom: 16,
+  },
+  toggleButton: {
+    flex: 1,
+    borderRadius: 999,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  toggleButtonActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  toggleButtonText: {
+    fontSize: 13,
+    color: MUTED_TEXT,
+    fontWeight: '600',
+  },
+  toggleButtonTextActive: {
+    color: BUTLER_BLUE,
+  },
   centeredMessage: {
     flex: 1,
     justifyContent: 'center',
@@ -517,6 +903,77 @@ const styles = StyleSheet.create({
   sectionSubtitle: {
     fontSize: 13,
     color: MUTED_TEXT,
+  },
+  calendarContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BORDER_RADIUS,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  calendarHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  calendarNavButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  calendarNavText: {
+    fontSize: 16,
+    color: BUTLER_BLUE,
+    fontWeight: '600',
+  },
+  calendarMonthText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: BUTLER_BLUE,
+  },
+  calendarWeekRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  calendarWeekdayText: {
+    width: 36,
+    textAlign: 'center',
+    fontSize: 12,
+    color: MUTED_TEXT,
+  },
+  calendarDayCell: {
+    width: 36,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarDayText: {
+    fontSize: 13,
+    color: BUTLER_BLUE,
+    fontWeight: '600',
+  },
+  calendarDaySelected: {
+    backgroundColor: BUTLER_BLUE,
+  },
+  calendarDaySelectedText: {
+    color: '#FFFFFF',
+  },
+  calendarDayToday: {
+    color: GREEN_ACCENT,
+  },
+  calendarDotsRow: {
+    flexDirection: 'row',
+    marginTop: 2,
+  },
+  calendarDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: BUTLER_BLUE,
+    marginHorizontal: 1,
   },
   eventCard: {
     backgroundColor: CARD_BACKGROUND,
@@ -654,6 +1111,11 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     marginTop: 8,
   },
+  modalHelperText: {
+    fontSize: 12,
+    color: MUTED_TEXT,
+    marginTop: 6,
+  },
   input: {
     borderRadius: 12,
     borderWidth: 1,
@@ -691,6 +1153,19 @@ const styles = StyleSheet.create({
   dropdownChipTextActive: {
     color: '#FFFFFF',
     fontWeight: '600',
+  },
+  datePickerButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  datePickerText: {
+    fontSize: 14,
+    color: BUTLER_BLUE,
+    fontWeight: '500',
   },
   modalActionsRow: {
     flexDirection: 'row',

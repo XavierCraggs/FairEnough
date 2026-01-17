@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -89,6 +89,7 @@ export default function ChoresScreen() {
 
   // Simple 3-dot menu state per chore
   const [openMenuChoreId, setOpenMenuChoreId] = useState<string | null>(null);
+  const lastOverdueCheckRef = useRef<number>(0);
 
   const isInHouse = !!houseId;
 
@@ -108,6 +109,19 @@ export default function ChoresScreen() {
       unsubscribe();
     };
   }, [houseId]);
+
+  useEffect(() => {
+    if (!houseId || !user?.uid || !chores.length) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastOverdueCheckRef.current < 60 * 1000) {
+      return;
+    }
+    lastOverdueCheckRef.current = now;
+    choreService.notifyOverdueChores(houseId, user.uid);
+  }, [houseId, user?.uid, chores]);
 
   // Subscribe to house members to populate "Assign to" dropdown
   useEffect(() => {

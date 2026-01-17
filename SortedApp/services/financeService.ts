@@ -14,6 +14,7 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../api/firebase';
+import notificationService from './notificationService';
 
 /**
  * Transaction data structure stored in Firestore
@@ -156,6 +157,16 @@ class FinanceService {
           ...newTransaction,
         } as TransactionData;
       });
+
+      try {
+        await notificationService.sendAlfredNudge(houseId, payerId, 'BILL_ADDED', {
+          amount: transactionData.amount,
+          description: transactionData.description,
+          transactionId: transactionData.transactionId,
+        });
+      } catch (notifyError) {
+        console.error('Failed to send bill-added notification:', notifyError);
+      }
 
       return transactionData;
     } catch (error) {

@@ -5,6 +5,12 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Alert,
+  Modal,
+  KeyboardAvoidingView,
+  Keyboard,
+  Platform,
+  TextInput,
+  TouchableWithoutFeedback,
   View as RNView,
 } from 'react-native';
 import { Text, View } from '@/components/Themed';
@@ -12,9 +18,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
 import houseService, { HouseData } from '@/services/houseService';
 import choreService from '@/services/choreService';
+import notificationService from '@/services/notificationService';
+import useAlfred from '@/hooks/useAlfred';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/api/firebase';
 import * as Clipboard from 'expo-clipboard';
+import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 const BACKGROUND_COLOR = '#F8FAF9';
 const BUTLER_BLUE = '#4A6572';
@@ -48,6 +57,21 @@ export default function DashboardScreen() {
   const [loadingHouse, setLoadingHouse] = useState(true);
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [loadingFairness, setLoadingFairness] = useState(true);
+  const [alfredModalVisible, setAlfredModalVisible] = useState(false);
+  const [nudgeModalVisible, setNudgeModalVisible] = useState(false);
+  const [nudgeInput, setNudgeInput] = useState('');
+  const [nudgeSubmitting, setNudgeSubmitting] = useState(false);
+
+  const {
+    notifications,
+    latestNotification,
+    unreadNotifications,
+    markAsRead,
+    getNextUnreadToast,
+  } = useAlfred({
+    houseId: houseId ?? null,
+    userId: currentUserId ?? null,
+  });
 
   // Fetch house data
   useEffect(() => {
@@ -59,7 +83,6 @@ export default function DashboardScreen() {
     const fetchHouse = async () => {
       try {
         const house = await houseService.getHouse(houseId);
-        console.log('House data loaded:', house);
         setHouseData(house);
       } catch (error) {
         console.error('Error fetching house:', error);
@@ -146,12 +169,40 @@ export default function DashboardScreen() {
     router.push('/(tabs)/chores');
   };
 
+  const handleOpenAlfredModal = () => {
+    setAlfredModalVisible(true);
+    unreadNotifications.forEach((notification) => {
+      markAsRead(notification.notificationId);
+    });
+  };
+
+  const handleSendNudge = async () => {
+    if (!houseId || !currentUserId) return;
+    if (!nudgeInput.trim()) {
+      Alert.alert('Alfred', 'Please enter a short reminder.');
+      return;
+    }
+
+    setNudgeSubmitting(true);
+    try {
+      await notificationService.sendAlfredNudge(houseId, currentUserId, 'NUDGE', {
+        subject: nudgeInput.trim(),
+      });
+      setNudgeInput('');
+      setNudgeModalVisible(false);
+    } catch (error: any) {
+      Alert.alert('Alfred', error?.message || 'Unable to send Alfred nudge.');
+    } finally {
+      setNudgeSubmitting(false);
+    }
+  };
+
   const handleLeaveHouse = () => {
     if (!houseId || !currentUserId) return;
 
     Alert.alert(
       'Leave House',
-      'Are you sure you want to leave this house? This action cannot be undone.',
+      'Are you sure you want to leave this house- This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -179,7 +230,30 @@ export default function DashboardScreen() {
     return currentUserStat?.deviation ?? null;
   };
 
+  const formatNotificationTime = (createdAt: any) => {
+    if (createdAt?.toDate) {
+      return createdAt.toDate().toLocaleString();
+    }
+    return 'Just now';
+  };
+
   const currentUserDeviation = getCurrentUserDeviation();
+  const unreadCount = unreadNotifications.length;
+  const latestNotificationTime = latestNotification
+    ? formatNotificationTime(latestNotification.createdAt)
+    : null;
+
+  useEffect(() => {
+    if (!houseId || !currentUserId) return;
+    const nextToast = getNextUnreadToast();
+    if (!nextToast) return;
+    Alert.alert('Alfred', nextToast.message, [
+      {
+        text: 'Dismiss',
+        onPress: () => markAsRead(nextToast.notificationId),
+      },
+    ]);
+  }, [houseId, currentUserId, getNextUnreadToast, markAsRead]);
 
   // No house case
   if (!houseId) {
@@ -206,9 +280,44 @@ export default function DashboardScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+    <View style={styles.container} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+      <ScrollView>
+        <View style={styles.content} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
         <Text style={styles.greeting}>Welcome back, {userName}!</Text>
+
+        {/* Alfred Briefing */}
+          <View style={styles.alfredCard}>
+            <RNView style={styles.alfredHeader}>
+              <RNView style={styles.alfredTitleRow}>
+                <RNView style={styles.alfredIcon}>
+                <FontAwesome name="user" size={18} color={BUTLER_BLUE} />
+                </RNView>
+                <Text style={styles.alfredTitle}>Alfred Briefing</Text>
+                {unreadCount > 0 && (
+                  <RNView style={styles.alfredBadge}>
+                    <Text style={styles.alfredBadgeText}>{unreadCount}</Text>
+                  </RNView>
+                )}
+              </RNView>
+              <TouchableOpacity onPress={handleOpenAlfredModal}>
+                <Text style={styles.alfredLink}>See All</Text>
+              </TouchableOpacity>
+            </RNView>
+            <Text style={styles.alfredMessage}>
+              {latestNotification?.message || 'No Alfred updates yet. Keep the house humming.'}
+            </Text>
+            {latestNotificationTime && (
+              <Text style={styles.alfredMeta}>Last update: {latestNotificationTime}</Text>
+            )}
+            <RNView style={styles.alfredActionsRow}>
+              <TouchableOpacity
+                style={styles.alfredButton}
+                onPress={() => setNudgeModalVisible(true)}
+              >
+              <Text style={styles.alfredButtonText}>Request Nudge</Text>
+            </TouchableOpacity>
+          </RNView>
+        </View>
 
         {/* House Information */}
         {loadingHouse ? (
@@ -255,7 +364,7 @@ export default function DashboardScreen() {
                   currentUserDeviation >= 0 ? styles.fairnessPositive : styles.fairnessNegative,
                 ]}
               >
-                {currentUserDeviation >= 0 ? '✓' : '⚠'} You're{' '}
+                {currentUserDeviation >= 0 ? 'Up' : 'Down'}{' '}
                 {Math.abs(Math.round(currentUserDeviation))} points{' '}
                 {currentUserDeviation >= 0 ? 'above' : 'behind'} average
               </Text>
@@ -309,6 +418,105 @@ export default function DashboardScreen() {
         </View>
       </View>
     </ScrollView>
+
+    <Modal
+      visible={alfredModalVisible}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setAlfredModalVisible(false)}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <RNView style={styles.modalContent}>
+            <RNView style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Alfred Briefing</Text>
+              <TouchableOpacity onPress={() => setAlfredModalVisible(false)}>
+                <Text style={styles.modalCloseText}>Close</Text>
+              </TouchableOpacity>
+            </RNView>
+            <TouchableOpacity
+              style={styles.modalPrimaryButton}
+              onPress={() => setNudgeModalVisible(true)}
+            >
+              <Text style={styles.modalPrimaryButtonText}>Request a nudge</Text>
+            </TouchableOpacity>
+            <ScrollView style={styles.modalList}>
+              {notifications.length === 0 ? (
+                <Text style={styles.description}>No notifications yet.</Text>
+              ) : (
+                notifications.map((notification) => (
+                  <RNView
+                    key={notification.notificationId}
+                    style={styles.notificationRow}
+                  >
+                    <Text style={styles.notificationMessage}>
+                      {notification.message}
+                    </Text>
+                    <Text style={styles.notificationMeta}>
+                      {notification.type} - {formatNotificationTime(notification.createdAt)}
+                    </Text>
+                  </RNView>
+                ))
+              )}
+            </ScrollView>
+          </RNView>
+        </KeyboardAvoidingView>
+      </TouchableWithoutFeedback>
+    </Modal>
+
+    <Modal
+      visible={nudgeModalVisible}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setNudgeModalVisible(false)}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <RNView style={styles.modalContent}>
+            <RNView style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Ask Alfred</Text>
+              <TouchableOpacity onPress={() => setNudgeModalVisible(false)}>
+                <Text style={styles.modalCloseText}>Close</Text>
+              </TouchableOpacity>
+            </RNView>
+            <Text style={styles.modalLabel}>What should Alfred remind the house-</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g., the dishes tonight"
+              placeholderTextColor={MUTED_TEXT}
+              value={nudgeInput}
+              onChangeText={setNudgeInput}
+            />
+            <RNView style={styles.modalActionsRow}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.modalActionButton]}
+                onPress={() => setNudgeModalVisible(false)}
+              >
+                <Text style={styles.actionButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalPrimaryButton, nudgeSubmitting && styles.buttonDisabled]}
+                onPress={handleSendNudge}
+                disabled={nudgeSubmitting}
+              >
+                {nudgeSubmitting ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalPrimaryButtonText}>Send nudge</Text>
+                )}
+              </TouchableOpacity>
+            </RNView>
+          </RNView>
+        </KeyboardAvoidingView>
+      </TouchableWithoutFeedback>
+    </Modal>
+    </View>
   );
 }
 
@@ -325,6 +533,80 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: BUTLER_BLUE,
     marginBottom: 32,
+  },
+  alfredCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  alfredHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  alfredTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  alfredBadge: {
+    backgroundColor: '#E11D48',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginLeft: 8,
+  },
+  alfredBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  alfredIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#E5EAF0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  alfredTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: BUTLER_BLUE,
+  },
+  alfredLink: {
+    fontSize: 13,
+    color: BUTLER_BLUE,
+    fontWeight: '600',
+  },
+  alfredMessage: {
+    fontSize: 14,
+    color: MUTED_TEXT,
+    lineHeight: 20,
+  },
+  alfredMeta: {
+    fontSize: 12,
+    color: MUTED_TEXT,
+    marginTop: 6,
+  },
+  alfredActionsRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+  },
+  alfredButton: {
+    backgroundColor: BUTLER_BLUE,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+  },
+  alfredButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
   section: {
     backgroundColor: '#FFFFFF',
@@ -465,5 +747,90 @@ const styles = StyleSheet.create({
   },
   actionButtonDangerText: {
     color: '#FFFFFF',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 28,
+    maxHeight: '85%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: BUTLER_BLUE,
+  },
+  modalCloseText: {
+    fontSize: 14,
+    color: MUTED_TEXT,
+  },
+  modalPrimaryButton: {
+    backgroundColor: BUTLER_BLUE,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalPrimaryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  modalList: {
+    maxHeight: 360,
+  },
+  notificationRow: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  notificationMessage: {
+    fontSize: 14,
+    color: BUTLER_BLUE,
+    marginBottom: 4,
+  },
+  notificationMeta: {
+    fontSize: 12,
+    color: MUTED_TEXT,
+  },
+  modalLabel: {
+    fontSize: 13,
+    color: MUTED_TEXT,
+    marginBottom: 8,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: BUTLER_BLUE,
+    backgroundColor: '#FFFFFF',
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+  },
+  modalActionButton: {
+    flex: 1,
+    marginRight: 12,
+    backgroundColor: '#E5E7EB',
   },
 });
