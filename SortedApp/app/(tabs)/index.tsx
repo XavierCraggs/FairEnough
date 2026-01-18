@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -17,12 +17,11 @@ import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
 import houseService, { HouseData } from '@/services/houseService';
-import choreService from '@/services/choreService';
+import choreService, { ChoreData, ROLLING_WINDOW_DAYS } from '@/services/choreService';
 import notificationService from '@/services/notificationService';
 import useAlfred from '@/hooks/useAlfred';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/api/firebase';
-import * as Clipboard from 'expo-clipboard';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 const BACKGROUND_COLOR = '#F8FAF9';
@@ -43,6 +42,7 @@ interface FairnessData {
     totalPoints: number;
     deviation: number;
   }>;
+  windowDays?: number;
 }
 
 export default function DashboardScreen() {
@@ -57,6 +57,13 @@ export default function DashboardScreen() {
   const [loadingHouse, setLoadingHouse] = useState(true);
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [loadingFairness, setLoadingFairness] = useState(true);
+  const [loadingChores, setLoadingChores] = useState(true);
+  const [choreSummary, setChoreSummary] = useState({
+    totalOpen: 0,
+    assignedToYou: 0,
+    unassigned: 0,
+    overdue: 0,
+  });
   const [alfredModalVisible, setAlfredModalVisible] = useState(false);
   const [nudgeModalVisible, setNudgeModalVisible] = useState(false);
   const [nudgeInput, setNudgeInput] = useState('');
@@ -153,20 +160,65 @@ export default function DashboardScreen() {
     calculateFairness();
   }, [houseId, members]);
 
-  const handleCopyInviteCode = async () => {
-    if (!houseData?.inviteCode) return;
-
-    try {
-      await Clipboard.setStringAsync(houseData.inviteCode);
-      Alert.alert('Copied!', 'Invite code copied to clipboard');
-    } catch (error) {
-      console.error('Error copying to clipboard:', error);
-      Alert.alert('Error', 'Failed to copy invite code');
+  const isChoreOverdue = (chore: ChoreData) => {
+    if (chore.status === 'completed') {
+      return false;
     }
+    const today = new Date();
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const lastCompleted = chore.lastCompletedAt?.toDate
+      ? chore.lastCompletedAt.toDate()
+      : null;
+
+    if (chore.frequency === 'daily') {
+      return !lastCompleted || lastCompleted < startOfToday;
+    }
+    if (chore.frequency === 'weekly') {
+      if (!lastCompleted) return true;
+      const nextDue = new Date(lastCompleted);
+      nextDue.setDate(nextDue.getDate() + 7);
+      return nextDue < startOfToday;
+    }
+    if (chore.frequency === 'one-time') {
+      return chore.status === 'pending';
+    }
+    return false;
   };
 
-  const handleAddChore = () => {
+  // Real-time chore snapshot
+  useEffect(() => {
+    if (!houseId) {
+      setLoadingChores(false);
+      return;
+    }
+
+    setLoadingChores(true);
+    const unsubscribe = choreService.subscribeToHouseChores(houseId, (chores) => {
+      const openChores = chores.filter((chore) => chore.status !== 'completed');
+      const assignedToYou = currentUserId
+        ? openChores.filter((chore) => chore.assignedTo === currentUserId).length
+        : 0;
+      const unassigned = openChores.filter((chore) => !chore.assignedTo).length;
+      const overdue = openChores.filter((chore) => isChoreOverdue(chore)).length;
+
+      setChoreSummary({
+        totalOpen: openChores.length,
+        assignedToYou,
+        unassigned,
+        overdue,
+      });
+      setLoadingChores(false);
+    });
+
+    return () => unsubscribe();
+  }, [houseId, currentUserId]);
+
+  const handleOpenChores = () => {
     router.push('/(tabs)/chores');
+  };
+
+  const handleOpenSettings = () => {
+    router.push('/(tabs)/settings');
   };
 
   const handleOpenAlfredModal = () => {
@@ -197,37 +249,40 @@ export default function DashboardScreen() {
     }
   };
 
-  const handleLeaveHouse = () => {
-    if (!houseId || !currentUserId) return;
+  const sortedFairnessStats = useMemo(() => {
+    if (!fairnessData?.memberStats?.length) {
+      return [];
+    }
+    return [...fairnessData.memberStats].sort((a, b) => b.totalPoints - a.totalPoints);
+  }, [fairnessData]);
 
-    Alert.alert(
-      'Leave House',
-      'Are you sure you want to leave this house- This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Leave',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await houseService.leaveHouse(currentUserId, houseId);
-              router.replace('/(auth)/house-setup');
-            } catch (error: any) {
-              console.error('Error leaving house:', error);
-              Alert.alert('Error', error.message || 'Failed to leave house');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const getCurrentUserDeviation = () => {
+  const currentUserStat = useMemo(() => {
     if (!fairnessData || !currentUserId) return null;
-    const currentUserStat = fairnessData.memberStats.find(
-      (stat) => stat.userId === currentUserId
-    );
-    return currentUserStat?.deviation ?? null;
+    return fairnessData.memberStats.find((stat) => stat.userId === currentUserId) || null;
+  }, [fairnessData, currentUserId]);
+
+  const fairnessRange = useMemo(() => {
+    if (!fairnessData?.memberStats?.length) {
+      return null;
+    }
+    const points = fairnessData.memberStats.map((stat) => stat.totalPoints);
+    const minPoints = Math.min(...points);
+    const maxPoints = Math.max(...points);
+    const spread = Math.max(1, maxPoints - minPoints);
+    const padding = Math.max(3, spread * 0.2);
+    return {
+      min: minPoints - padding,
+      max: maxPoints + padding,
+      average: fairnessData.averagePoints,
+    };
+  }, [fairnessData]);
+
+  const getFairnessPosition = (points: number) => {
+    if (!fairnessRange) return 0.5;
+    const range = fairnessRange.max - fairnessRange.min;
+    if (range <= 0) return 0.5;
+    const clamped = Math.min(fairnessRange.max, Math.max(fairnessRange.min, points));
+    return (clamped - fairnessRange.min) / range;
   };
 
   const formatNotificationTime = (createdAt: any) => {
@@ -237,7 +292,7 @@ export default function DashboardScreen() {
     return 'Just now';
   };
 
-  const currentUserDeviation = getCurrentUserDeviation();
+  const currentUserDeviation = currentUserStat?.deviation ?? null;
   const unreadCount = unreadNotifications.length;
   const latestNotificationTime = latestNotification
     ? formatNotificationTime(latestNotification.createdAt)
@@ -319,103 +374,154 @@ export default function DashboardScreen() {
           </RNView>
         </View>
 
-        {/* House Information */}
+        {/* House Snapshot */}
         {loadingHouse ? (
           <View style={styles.section}>
             <ActivityIndicator size="small" color={BUTLER_BLUE} />
           </View>
         ) : houseData ? (
           <View style={styles.section}>
+            <Text style={styles.sectionTitle}>House Snapshot</Text>
             <Text style={styles.houseName}>{houseData.name}</Text>
-            <RNView style={styles.inviteCodeContainer}>
-              <Text style={styles.inviteCodeLabel}>Invite Code:</Text>
-              <RNView style={styles.inviteCodeBox}>
-                <Text style={styles.inviteCodeText}>{houseData.inviteCode}</Text>
-                <TouchableOpacity
-                  style={styles.copyButton}
-                  onPress={handleCopyInviteCode}
-                >
-                  <Text style={styles.copyButtonText}>Copy</Text>
-                </TouchableOpacity>
-              </RNView>
-            </RNView>
             <Text style={styles.memberCount}>
-              {members.length} {members.length === 1 ? 'member' : 'members'}
+              {loadingMembers
+                ? 'Loading members...'
+                : `${members.length} ${members.length === 1 ? 'member' : 'members'}`}
             </Text>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleOpenSettings}>
+              <Text style={styles.secondaryButtonText}>Manage house in Settings</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
 
-        {/* House Fairness Summary */}
+        {/* House Fairness */}
         {loadingFairness ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>House Fairness</Text>
             <ActivityIndicator size="small" color={BUTLER_BLUE} />
           </View>
-        ) : fairnessData && currentUserDeviation !== null ? (
+        ) : fairnessData ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>House Fairness</Text>
-            <Text style={styles.fairnessAverage}>
-              Average: {Math.round(fairnessData.averagePoints)} points
+            <Text style={styles.sectionSubtitle}>
+              Rolling {fairnessData.windowDays ?? ROLLING_WINDOW_DAYS}-day balance.
             </Text>
-            <RNView style={styles.fairnessStatus}>
-              <Text
-                style={[
-                  styles.fairnessStatusText,
-                  currentUserDeviation >= 0 ? styles.fairnessPositive : styles.fairnessNegative,
-                ]}
-              >
-                {currentUserDeviation >= 0 ? 'Up' : 'Down'}{' '}
-                {Math.abs(Math.round(currentUserDeviation))} points{' '}
-                {currentUserDeviation >= 0 ? 'above' : 'behind'} average
+            {currentUserDeviation !== null && (
+              <Text style={styles.fairnessSummary}>
+                You're {Math.abs(Math.round(currentUserDeviation))} points{' '}
+                {currentUserDeviation >= 0 ? 'above' : 'behind'} the average.
               </Text>
+            )}
+            {fairnessRange && (
+              <>
+                <RNView style={styles.fairnessScale}>
+                  <RNView style={styles.fairnessTrack} />
+                  <RNView
+                    style={[
+                      styles.fairnessAverageMarker,
+                      { left: `${getFairnessPosition(fairnessRange.average) * 100}%` },
+                    ]}
+                  />
+                  {sortedFairnessStats.map((member) => {
+                    const position = getFairnessPosition(member.totalPoints) * 100;
+                    const isCurrentUser = member.userId === currentUserId;
+                    const dotStyle = isCurrentUser
+                      ? styles.fairnessDotCurrent
+                      : member.deviation >= 0
+                      ? styles.fairnessDotPositive
+                      : styles.fairnessDotNegative;
+                    return (
+                      <RNView
+                        key={member.userId}
+                        style={[styles.fairnessDot, dotStyle, { left: `${position}%` }]}
+                      />
+                    );
+                  })}
+                </RNView>
+                <RNView style={styles.fairnessLegend}>
+                  <Text style={styles.fairnessLegendText}>Behind</Text>
+                  <Text style={styles.fairnessLegendText}>Ahead</Text>
+                </RNView>
+              </>
+            )}
+            <RNView style={styles.fairnessList}>
+              {sortedFairnessStats.length === 0 ? (
+                <Text style={styles.description}>No fairness data yet.</Text>
+              ) : (
+                sortedFairnessStats.map((member) => (
+                  <RNView key={member.userId} style={styles.fairnessRow}>
+                    <Text style={styles.fairnessMemberName}>
+                      {member.userName}
+                      {member.userId === currentUserId ? ' (You)' : ''}
+                    </Text>
+                    <RNView style={styles.fairnessMeta}>
+                      <Text style={styles.fairnessPoints}>
+                        {member.totalPoints} pts
+                      </Text>
+                      <RNView
+                        style={[
+                          styles.fairnessDeltaBadge,
+                          member.deviation >= 0
+                            ? styles.fairnessDeltaPositive
+                            : styles.fairnessDeltaNegative,
+                        ]}
+                      >
+                        <Text style={styles.fairnessDeltaText}>
+                          {member.deviation >= 0 ? '+' : ''}
+                          {Math.round(member.deviation)} avg
+                        </Text>
+                      </RNView>
+                    </RNView>
+                  </RNView>
+                ))
+              )}
             </RNView>
           </View>
         ) : null}
 
-        {/* Members List */}
-        {loadingMembers ? (
+        {/* Chores Snapshot */}
+        {loadingChores ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>House Members</Text>
+            <Text style={styles.sectionTitle}>Chores Snapshot</Text>
             <ActivityIndicator size="small" color={BUTLER_BLUE} />
           </View>
         ) : (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>House Members</Text>
-            {members.length === 0 ? (
-              <Text style={styles.description}>No members found</Text>
-            ) : (
-              members.map((member) => (
-                <RNView key={member.userId} style={styles.memberRow}>
-                  <RNView style={styles.memberInfo}>
-                    <Text style={styles.memberName}>
-                      {member.name}
-                      {member.userId === currentUserId && (
-                        <Text style={styles.youBadge}> (You)</Text>
-                      )}
-                    </Text>
-                    <Text style={styles.memberPoints}>{member.totalPoints} points</Text>
-                  </RNView>
-                </RNView>
-              ))
-            )}
+            <Text style={styles.sectionTitle}>Chores Snapshot</Text>
+            <Text style={styles.sectionSubtitle}>
+              Open tasks and who they're waiting on.
+            </Text>
+            <RNView style={styles.statsRow}>
+              <RNView style={styles.statCard}>
+                <Text style={styles.statValue}>{choreSummary.totalOpen}</Text>
+                <Text style={styles.statLabel}>Open</Text>
+              </RNView>
+              <RNView style={styles.statCard}>
+                <Text style={styles.statValue}>{choreSummary.assignedToYou}</Text>
+                <Text style={styles.statLabel}>Assigned to you</Text>
+              </RNView>
+              <RNView style={styles.statCard}>
+                <Text style={styles.statValue}>{choreSummary.unassigned}</Text>
+                <Text style={styles.statLabel}>Unassigned</Text>
+              </RNView>
+              <RNView style={styles.statCard}>
+                <Text
+                  style={[
+                    styles.statValue,
+                    choreSummary.overdue > 0 && styles.statValueDanger,
+                  ]}
+                >
+                  {choreSummary.overdue}
+                </Text>
+                <Text style={styles.statLabel}>Overdue</Text>
+              </RNView>
+            </RNView>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleOpenChores}>
+              <Text style={styles.secondaryButtonText}>View chores</Text>
+            </TouchableOpacity>
           </View>
         )}
 
-        {/* Quick Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <TouchableOpacity style={styles.actionButton} onPress={handleAddChore}>
-            <Text style={styles.actionButtonText}>Add Chore</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.actionButtonDanger]}
-            onPress={handleLeaveHouse}
-          >
-            <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>
-              Leave House
-            </Text>
-          </TouchableOpacity>
-        </View>
       </View>
     </ScrollView>
 
@@ -495,20 +601,24 @@ export default function DashboardScreen() {
             />
             <RNView style={styles.modalActionsRow}>
               <TouchableOpacity
-                style={[styles.actionButton, styles.modalActionButton]}
+                style={[styles.modalActionButton, styles.modalActionCancel]}
                 onPress={() => setNudgeModalVisible(false)}
               >
-                <Text style={styles.actionButtonText}>Cancel</Text>
+                <Text style={styles.modalActionButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalPrimaryButton, nudgeSubmitting && styles.buttonDisabled]}
+                style={[
+                  styles.modalActionButton,
+                  styles.modalActionConfirm,
+                  nudgeSubmitting && styles.buttonDisabled,
+                ]}
                 onPress={handleSendNudge}
                 disabled={nudgeSubmitting}
               >
                 {nudgeSubmitting ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.modalPrimaryButtonText}>Send nudge</Text>
+                  <Text style={styles.modalActionButtonText}>Send nudge</Text>
                 )}
               </TouchableOpacity>
             </RNView>
@@ -622,6 +732,11 @@ const styles = StyleSheet.create({
     color: BUTLER_BLUE,
     marginBottom: 12,
   },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: MUTED_TEXT,
+    marginBottom: 12,
+  },
   description: {
     fontSize: 16,
     color: MUTED_TEXT,
@@ -634,87 +749,145 @@ const styles = StyleSheet.create({
     color: BUTLER_BLUE,
     marginBottom: 16,
   },
-  inviteCodeContainer: {
-    marginBottom: 12,
-  },
-  inviteCodeLabel: {
-    fontSize: 14,
-    color: MUTED_TEXT,
-    marginBottom: 8,
-  },
-  inviteCodeBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  inviteCodeText: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: '600',
-    color: BUTLER_BLUE,
-    letterSpacing: 2,
-  },
-  copyButton: {
-    backgroundColor: BUTLER_BLUE,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
-  },
-  copyButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   memberCount: {
     fontSize: 16,
     color: MUTED_TEXT,
   },
-  fairnessAverage: {
-    fontSize: 16,
-    color: MUTED_TEXT,
-    marginBottom: 8,
+  secondaryButton: {
+    marginTop: 12,
+    backgroundColor: '#E5E7EB',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
   },
-  fairnessStatus: {
-    marginTop: 8,
-  },
-  fairnessStatusText: {
-    fontSize: 16,
+  secondaryButtonText: {
+    color: BUTLER_BLUE,
+    fontSize: 14,
     fontWeight: '600',
   },
-  fairnessPositive: {
-    color: '#16A34A',
+  fairnessSummary: {
+    fontSize: 15,
+    color: BUTLER_BLUE,
+    marginBottom: 14,
+    fontWeight: '600',
   },
-  fairnessNegative: {
-    color: '#DC2626',
+  fairnessScale: {
+    position: 'relative',
+    height: 32,
+    justifyContent: 'center',
+    marginBottom: 8,
   },
-  memberRow: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+  fairnessTrack: {
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: '#E5E7EB',
   },
-  memberInfo: {
+  fairnessAverageMarker: {
+    position: 'absolute',
+    width: 2,
+    height: 24,
+    backgroundColor: BUTLER_BLUE,
+    top: 4,
+  },
+  fairnessDot: {
+    position: 'absolute',
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    top: 10,
+    transform: [{ translateX: -6 }],
+  },
+  fairnessDotCurrent: {
+    backgroundColor: BUTLER_BLUE,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  fairnessDotPositive: {
+    backgroundColor: '#16A34A',
+  },
+  fairnessDotNegative: {
+    backgroundColor: '#DC2626',
+  },
+  fairnessLegend: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  fairnessLegendText: {
+    fontSize: 12,
+    color: MUTED_TEXT,
+  },
+  fairnessList: {
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    paddingTop: 8,
+  },
+  fairnessRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
   },
-  memberName: {
-    fontSize: 16,
+  fairnessMemberName: {
+    fontSize: 15,
+    color: BUTLER_BLUE,
     fontWeight: '500',
+  },
+  fairnessMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  fairnessPoints: {
+    fontSize: 13,
+    color: MUTED_TEXT,
+    marginRight: 8,
+  },
+  fairnessDeltaBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  fairnessDeltaPositive: {
+    backgroundColor: '#DCFCE7',
+  },
+  fairnessDeltaNegative: {
+    backgroundColor: '#FEE2E2',
+  },
+  fairnessDeltaText: {
+    fontSize: 11,
+    fontWeight: '600',
     color: BUTLER_BLUE,
   },
-  youBadge: {
-    fontSize: 14,
-    color: MUTED_TEXT,
-    fontWeight: '400',
+  statsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 16,
   },
-  memberPoints: {
-    fontSize: 16,
+  statCard: {
+    width: '48%',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: BUTLER_BLUE,
+    marginBottom: 4,
+  },
+  statValueDanger: {
+    color: '#DC2626',
+  },
+  statLabel: {
+    fontSize: 12,
     color: MUTED_TEXT,
-    fontWeight: '500',
   },
   primaryButton: {
     backgroundColor: BUTLER_BLUE,
@@ -737,16 +910,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  actionButtonDanger: {
-    backgroundColor: '#DC2626',
-  },
   actionButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
-  },
-  actionButtonDangerText: {
-    color: '#FFFFFF',
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -830,7 +997,22 @@ const styles = StyleSheet.create({
   },
   modalActionButton: {
     flex: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalActionCancel: {
+    backgroundColor: '#DC2626',
     marginRight: 12,
-    backgroundColor: '#E5E7EB',
+  },
+  modalActionConfirm: {
+    backgroundColor: BUTLER_BLUE,
+    marginLeft: 12,
+  },
+  modalActionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

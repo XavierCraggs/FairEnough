@@ -9,6 +9,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -20,9 +21,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import choreService, {
   ChoreData,
   ChoreServiceError,
+  ROLLING_WINDOW_DAYS,
 } from '../../services/choreService';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../api/firebase';
+import Slider from '@react-native-community/slider';
 
 const BACKGROUND_COLOR = '#F8FAF9';
 const BUTLER_BLUE = '#4A6572';
@@ -32,7 +35,7 @@ const GREEN_ACCENT = '#16A34A';
 const BORDER_RADIUS = 16;
 
 type FrequencyOption = 'daily' | 'weekly' | 'one-time';
-type StatusFilter = 'all' | 'pending' | 'completed';
+type StatusFilter = 'all' | 'pending' | 'completed' | 'upcoming';
 
 interface MemberOption {
   userId: string;
@@ -56,7 +59,47 @@ const STATUS_FILTERS: { label: string; value: StatusFilter }[] = [
   { label: 'All', value: 'all' },
   { label: 'Pending', value: 'pending' },
   { label: 'Completed', value: 'completed' },
+  { label: 'Upcoming', value: 'upcoming' },
 ];
+
+const startOfDay = (date: Date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const getDueDate = (chore: ChoreData, referenceDate: Date) => {
+  if (chore.nextDueAt?.toDate) {
+    return startOfDay(chore.nextDueAt.toDate());
+  }
+  if (chore.frequency === 'one-time') {
+    return chore.status === 'completed' ? null : startOfDay(referenceDate);
+  }
+  if (chore.lastCompletedAt?.toDate) {
+    const lastCompleted = startOfDay(chore.lastCompletedAt.toDate());
+    const daysToAdd = chore.frequency === 'daily' ? 1 : 7;
+    return new Date(
+      lastCompleted.getFullYear(),
+      lastCompleted.getMonth(),
+      lastCompleted.getDate() + daysToAdd
+    );
+  }
+  if (chore.createdAt?.toDate) {
+    return startOfDay(chore.createdAt.toDate());
+  }
+  return startOfDay(referenceDate);
+};
+
+const getDueLabel = (dueDate: Date | null) => {
+  if (!dueDate) return null;
+  const today = startOfDay(new Date());
+  const diffTime = dueDate.getTime() - today.getTime();
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) {
+    const overdueDays = Math.abs(diffDays);
+    return overdueDays === 1 ? 'Overdue by 1 day' : `Overdue by ${overdueDays} days`;
+  }
+  if (diffDays === 0) return 'Due today';
+  if (diffDays === 1) return 'Due tomorrow';
+  return `Due in ${diffDays} days`;
+};
 
 export default function ChoresScreen() {
   const { user, userProfile } = useAuth();
@@ -72,6 +115,7 @@ export default function ChoresScreen() {
   const [fairnessLoading, setFairnessLoading] = useState(false);
   const [averagePoints, setAveragePoints] = useState<number | null>(null);
   const [memberStats, setMemberStats] = useState<FairnessMemberStat[]>([]);
+  const [fairnessWindowDays, setFairnessWindowDays] = useState<number | null>(null);
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [sortByPointsDesc, setSortByPointsDesc] = useState(true);
@@ -82,14 +126,16 @@ export default function ChoresScreen() {
   const [editingChore, setEditingChore] = useState<ChoreData | null>(null);
   const [titleInput, setTitleInput] = useState('');
   const [descriptionInput, setDescriptionInput] = useState('');
-  const [pointsInput, setPointsInput] = useState('5');
+  const [pointsInput, setPointsInput] = useState(5);
   const [assignedToInput, setAssignedToInput] = useState<string | null>(null);
   const [frequencyInput, setFrequencyInput] = useState<FrequencyOption>('daily');
   const [submitting, setSubmitting] = useState(false);
+  const [setupStep, setSetupStep] = useState(1);
 
   // Simple 3-dot menu state per chore
   const [openMenuChoreId, setOpenMenuChoreId] = useState<string | null>(null);
   const lastOverdueCheckRef = useRef<number>(0);
+  const lastAutoAssignRef = useRef<number>(0);
 
   const isInHouse = !!houseId;
 
@@ -121,6 +167,19 @@ export default function ChoresScreen() {
     }
     lastOverdueCheckRef.current = now;
     choreService.notifyOverdueChores(houseId, user.uid);
+  }, [houseId, user?.uid, chores]);
+
+  useEffect(() => {
+    if (!houseId || !user?.uid || !chores.length) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastAutoAssignRef.current < 2 * 60 * 1000) {
+      return;
+    }
+    lastAutoAssignRef.current = now;
+    choreService.autoAssignDueChores(houseId, user.uid);
   }, [houseId, user?.uid, chores]);
 
   // Subscribe to house members to populate "Assign to" dropdown
@@ -163,6 +222,7 @@ export default function ChoresScreen() {
       const result = await choreService.calculateHouseFairness(houseId);
       setAveragePoints(result.averagePoints);
       setMemberStats(result.memberStats);
+      setFairnessWindowDays(result.windowDays ?? null);
     } catch (err: any) {
       const message =
         (err as ChoreServiceError)?.message ?? 'Unable to calculate house fairness.';
@@ -187,9 +247,10 @@ export default function ChoresScreen() {
     setEditingChore(null);
     setTitleInput('');
     setDescriptionInput('');
-    setPointsInput('5');
+    setPointsInput(5);
     setAssignedToInput(null);
     setFrequencyInput('daily');
+    setSetupStep(1);
   };
 
   const openCreateModal = () => {
@@ -201,9 +262,10 @@ export default function ChoresScreen() {
     setEditingChore(chore);
     setTitleInput(chore.title);
     setDescriptionInput(chore.description ?? '');
-    setPointsInput(String(chore.points));
+    setPointsInput(chore.points);
     setAssignedToInput(chore.assignedTo);
     setFrequencyInput(chore.frequency);
+    setSetupStep(3);
     setModalVisible(true);
   };
 
@@ -223,8 +285,8 @@ export default function ChoresScreen() {
     }
 
     const points = Number(pointsInput);
-    if (Number.isNaN(points) || points < 0) {
-      Alert.alert('Chores', 'Please enter a valid points value (0 or more).');
+    if (Number.isNaN(points) || points < 1 || points > 10) {
+      Alert.alert('Chores', 'Please enter a difficulty score between 1 and 10.');
       return;
     }
 
@@ -238,11 +300,11 @@ export default function ChoresScreen() {
           {
             title: titleInput.trim(),
             description: descriptionInput.trim(),
-            points,
-            frequency: frequencyInput,
-          },
-          user.uid
-        );
+          points,
+          frequency: frequencyInput,
+        },
+        user.uid
+      );
 
         if (assignedToInput !== editingChore.assignedTo) {
           await choreService.assignChore(
@@ -270,6 +332,26 @@ export default function ChoresScreen() {
       handleError(err, 'Unable to save chore. Please try again.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleStepAdvance = () => {
+    if (setupStep === 1) {
+      if (!titleInput.trim()) {
+        Alert.alert('Chores', 'Please enter a title for the chore.');
+        return;
+      }
+      setSetupStep(2);
+      return;
+    }
+
+    if (setupStep === 2) {
+      const points = Number(pointsInput);
+      if (Number.isNaN(points) || points < 1 || points > 10) {
+        Alert.alert('Chores', 'Please enter a difficulty score between 1 and 10.');
+        return;
+      }
+      setSetupStep(3);
     }
   };
 
@@ -323,25 +405,39 @@ export default function ChoresScreen() {
         choreService.getHouseChores(houseId).then(setChores),
         loadFairness(),
       ]);
+      if (user?.uid) {
+        await choreService.autoAssignDueChores(houseId, user.uid);
+      }
     } catch (err: any) {
       handleError(err, 'Unable to refresh chores.');
     } finally {
       setRefreshing(false);
     }
-  }, [houseId, loadFairness, handleError]);
+  }, [houseId, loadFairness, handleError, user?.uid]);
 
   const filteredAndSortedChores = useMemo(() => {
     let result = chores;
+    const today = startOfDay(new Date());
 
     if (statusFilter === 'pending') {
       result = result.filter((c) => c.status === 'pending' || c.status === 'overdue');
     } else if (statusFilter === 'completed') {
       result = result.filter((c) => c.status === 'completed');
+    } else if (statusFilter === 'upcoming') {
+      result = result.filter((c) => {
+        const dueDate = getDueDate(c, today);
+        return !!dueDate && dueDate >= today;
+      });
     }
 
-    return [...result].sort((a, b) =>
-      sortByPointsDesc ? b.points - a.points : a.points - b.points
-    );
+    return [...result].sort((a, b) => {
+      if (statusFilter === 'upcoming') {
+        const dueA = getDueDate(a, today)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        const dueB = getDueDate(b, today)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        if (dueA !== dueB) return dueA - dueB;
+      }
+      return sortByPointsDesc ? b.points - a.points : a.points - b.points;
+    });
   }, [chores, sortByPointsDesc, statusFilter]);
 
   const getAssignedName = (assignedTo: string | null) => {
@@ -350,19 +446,31 @@ export default function ChoresScreen() {
     return member?.name ?? 'Unassigned';
   };
 
-  const renderStatusBadge = (status: ChoreData['status']) => {
-    let label = 'Pending';
+  const renderStatusBadge = (chore: ChoreData) => {
+    const today = startOfDay(new Date());
+    const dueDate = getDueDate(chore, today);
+    const dueLabel = getDueLabel(dueDate);
+
+    let label = chore.status === 'completed' ? 'Completed' : 'Pending';
     let backgroundColor = '#E5E7EB';
     let color = BUTLER_BLUE;
 
-    if (status === 'completed') {
-      label = 'Completed';
+    if (chore.status === 'completed') {
       backgroundColor = '#DCFCE7';
       color = '#166534';
-    } else if (status === 'overdue') {
-      label = 'Overdue';
+      if (dueLabel) {
+        label = `Next ${dueLabel.toLowerCase()}`;
+        backgroundColor = '#DBEAFE';
+        color = '#1D4ED8';
+      }
+    } else if (dueLabel?.startsWith('Overdue')) {
+      label = dueLabel;
       backgroundColor = '#FEE2E2';
       color = '#B91C1C';
+    } else if (dueLabel) {
+      label = dueLabel;
+      backgroundColor = '#FEF3C7';
+      color = '#92400E';
     }
 
     return (
@@ -377,7 +485,7 @@ export default function ChoresScreen() {
     const lastByName = getAssignedName(chore.lastCompletedBy);
     return (
       <Text style={styles.lastCompletedText}>
-        Last completed by {lastByName} • {chore.totalCompletions} time
+        Last completed by {lastByName} - {chore.totalCompletions} time
         {chore.totalCompletions === 1 ? '' : 's'}
       </Text>
     );
@@ -386,6 +494,8 @@ export default function ChoresScreen() {
   const renderChoreCard = ({ item }: { item: ChoreData }) => {
     const isPending = item.status === 'pending' || item.status === 'overdue';
     const assignedName = getAssignedName(item.assignedTo);
+    const dueDate = getDueDate(item, startOfDay(new Date()));
+    const dueLabel = getDueLabel(dueDate);
     const canComplete =
       isPending && (item.assignedTo === null || item.assignedTo === user?.uid);
 
@@ -399,7 +509,7 @@ export default function ChoresScreen() {
             )}
           </RNView>
           <RNView style={styles.choreHeaderRight}>
-            {renderStatusBadge(item.status)}
+            {renderStatusBadge(item)}
             <TouchableOpacity
               style={styles.menuButton}
               onPress={() =>
@@ -408,16 +518,17 @@ export default function ChoresScreen() {
                 )
               }
             >
-              <Text style={styles.menuButtonText}>⋮</Text>
+              <Text style={styles.menuButtonText}>...</Text>
             </TouchableOpacity>
           </RNView>
         </RNView>
 
         <RNView style={styles.choreMetaRow}>
-          <Text style={styles.choreMetaText}>+{item.points} pts</Text>
-          <Text style={styles.choreMetaDivider}>•</Text>
+          <Text style={styles.choreMetaText}>{item.points}/10 difficulty</Text>
+          <Text style={styles.choreMetaDivider}>|</Text>
           <Text style={styles.choreMetaText}>Assigned to {assignedName}</Text>
         </RNView>
+        {dueLabel && <Text style={styles.choreDueText}>{dueLabel}</Text>}
 
         {renderLastCompleted(item)}
 
@@ -516,7 +627,8 @@ export default function ChoresScreen() {
         <Text style={styles.sectionTitle}>House Fairness</Text>
         {averagePoints !== null && (
           <Text style={styles.fairnessSubtitle}>
-            Average points: {Math.round(averagePoints)}
+            Average ({fairnessWindowDays ?? ROLLING_WINDOW_DAYS} days):{' '}
+            {Math.round(averagePoints)} pts
           </Text>
         )}
 
@@ -585,9 +697,24 @@ export default function ChoresScreen() {
         onPress={() => setSortByPointsDesc((prev) => !prev)}
       >
         <Text style={styles.sortButtonText}>
-          {sortByPointsDesc ? 'Points ↓' : 'Points ↑'}
+          {sortByPointsDesc ? 'Points high' : 'Points low'}
         </Text>
       </TouchableOpacity>
+    </RNView>
+  );
+
+  const renderStepIndicator = () => (
+    <RNView style={styles.stepIndicatorRow}>
+      {[1, 2, 3].map((step) => (
+        <RNView
+          key={step}
+          style={[
+            styles.stepDot,
+            setupStep === step && styles.stepDotActive,
+            setupStep > step && styles.stepDotComplete,
+          ]}
+        />
+      ))}
     </RNView>
   );
 
@@ -604,40 +731,36 @@ export default function ChoresScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <RNView style={styles.modalContent}>
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
             <Text style={styles.modalTitle}>
               {editingChore ? 'Edit Chore' : 'Add Chore'}
             </Text>
+            {!editingChore && renderStepIndicator()}
 
-            <Text style={styles.modalLabel}>Title</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Fold laundry"
-              placeholderTextColor={MUTED_TEXT}
-              value={titleInput}
-              onChangeText={setTitleInput}
-            />
-
-            <Text style={styles.modalLabel}>Description (optional)</Text>
-            <TextInput
-              style={[styles.input, styles.inputMultiline]}
-              placeholder="Include any helpful details"
-              placeholderTextColor={MUTED_TEXT}
-              multiline
-              value={descriptionInput}
-              onChangeText={setDescriptionInput}
-            />
-
-            <RNView style={styles.row}>
-              <RNView style={styles.rowItem}>
-                <Text style={styles.modalLabel}>Points</Text>
+            {(editingChore || setupStep === 1) && (
+              <>
+                <Text style={styles.modalLabel}>Title</Text>
                 <TextInput
                   style={styles.input}
-                  keyboardType="numeric"
-                  value={pointsInput}
-                  onChangeText={setPointsInput}
+                  placeholder="Fold laundry"
+                  placeholderTextColor={MUTED_TEXT}
+                  value={titleInput}
+                  onChangeText={setTitleInput}
                 />
-              </RNView>
-              <RNView style={[styles.rowItem, { marginLeft: 12 }]}>
+
+                <Text style={styles.modalLabel}>Description (optional)</Text>
+                <TextInput
+                  style={[styles.input, styles.inputMultiline]}
+                  placeholder="Include any helpful details"
+                  placeholderTextColor={MUTED_TEXT}
+                  multiline
+                  value={descriptionInput}
+                  onChangeText={setDescriptionInput}
+                />
+
                 <Text style={styles.modalLabel}>Frequency</Text>
                 <RNView style={styles.dropdownContainer}>
                   {FREQUENCY_OPTIONS.map((option) => (
@@ -661,48 +784,92 @@ export default function ChoresScreen() {
                     </TouchableOpacity>
                   ))}
                 </RNView>
-              </RNView>
-            </RNView>
+              </>
+            )}
 
-            <Text style={styles.modalLabel}>Assign to</Text>
-            <RNView style={styles.dropdownContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.dropdownChip,
-                  assignedToInput === null && styles.dropdownChipActive,
-                ]}
-                onPress={() => setAssignedToInput(null)}
-              >
-                <Text
-                  style={[
-                    styles.dropdownChipText,
-                    assignedToInput === null && styles.dropdownChipTextActive,
-                  ]}
-                >
-                  Unassigned
+            {(editingChore || setupStep === 2) && (
+              <>
+                <Text style={styles.modalLabel}>Difficulty (1-10)</Text>
+                <Text style={styles.helperText}>
+                  Higher number means more effort and more credit toward fairness.
                 </Text>
-              </TouchableOpacity>
-              {members.map((member) => (
-                <TouchableOpacity
-                  key={member.userId}
-                  style={[
-                    styles.dropdownChip,
-                    assignedToInput === member.userId && styles.dropdownChipActive,
-                  ]}
-                  onPress={() => setAssignedToInput(member.userId)}
-                >
-                  <Text
+                <RNView style={styles.sliderRow}>
+                  <Text style={styles.sliderValue}>{pointsInput}</Text>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={1}
+                    maximumValue={10}
+                    step={1}
+                    minimumTrackTintColor={BUTLER_BLUE}
+                    maximumTrackTintColor="#E5E7EB"
+                    thumbTintColor={BUTLER_BLUE}
+                    value={pointsInput}
+                    onValueChange={setPointsInput}
+                  />
+                </RNView>
+
+                <Text style={styles.modalLabel}>Assign to</Text>
+                <RNView style={styles.dropdownContainer}>
+                  <TouchableOpacity
                     style={[
-                      styles.dropdownChipText,
-                      assignedToInput === member.userId &&
-                        styles.dropdownChipTextActive,
+                      styles.dropdownChip,
+                      assignedToInput === null && styles.dropdownChipActive,
                     ]}
+                    onPress={() => setAssignedToInput(null)}
                   >
-                    {member.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </RNView>
+                    <Text
+                      style={[
+                        styles.dropdownChipText,
+                        assignedToInput === null && styles.dropdownChipTextActive,
+                      ]}
+                    >
+                      Auto-assign
+                    </Text>
+                  </TouchableOpacity>
+                  {members.map((member) => (
+                    <TouchableOpacity
+                      key={member.userId}
+                      style={[
+                        styles.dropdownChip,
+                        assignedToInput === member.userId && styles.dropdownChipActive,
+                      ]}
+                      onPress={() => setAssignedToInput(member.userId)}
+                    >
+                      <Text
+                        style={[
+                          styles.dropdownChipText,
+                          assignedToInput === member.userId &&
+                            styles.dropdownChipTextActive,
+                        ]}
+                      >
+                        {member.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </RNView>
+              </>
+            )}
+
+            {!editingChore && setupStep === 3 && (
+              <RNView style={styles.reviewCard}>
+                <Text style={styles.reviewTitle}>Review</Text>
+                <Text style={styles.reviewItem}>
+                  Title: {titleInput.trim() || 'Untitled'}
+                </Text>
+                <Text style={styles.reviewItem}>
+                  Frequency: {frequencyInput}
+                </Text>
+                <Text style={styles.reviewItem}>
+                  Difficulty: {pointsInput}/10
+                </Text>
+                <Text style={styles.reviewItem}>
+                  Assigned to: {getAssignedName(assignedToInput)}
+                </Text>
+                {!!descriptionInput.trim() && (
+                  <Text style={styles.reviewItem}>Notes: {descriptionInput.trim()}</Text>
+                )}
+              </RNView>
+            )}
 
             <RNView style={styles.modalActionsRow}>
               <TouchableOpacity
@@ -712,20 +879,41 @@ export default function ChoresScreen() {
               >
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalPrimaryButton]}
-                onPress={handleSubmit}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.modalPrimaryText}>
-                    {editingChore ? 'Save changes' : 'Add chore'}
-                  </Text>
-                )}
-              </TouchableOpacity>
+              {!editingChore && setupStep > 1 && (
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalSecondaryButton]}
+                  onPress={() => setSetupStep((prev) => Math.max(1, prev - 1))}
+                  disabled={submitting}
+                >
+                  <Text style={styles.modalSecondaryText}>Back</Text>
+                </TouchableOpacity>
+              )}
+              {!editingChore && setupStep < 3 && (
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalPrimaryButton]}
+                  onPress={handleStepAdvance}
+                  disabled={submitting}
+                >
+                  <Text style={styles.modalPrimaryText}>Next</Text>
+                </TouchableOpacity>
+              )}
+              {(editingChore || setupStep === 3) && (
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalPrimaryButton]}
+                  onPress={handleSubmit}
+                  disabled={submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalPrimaryText}>
+                      {editingChore ? 'Save changes' : 'Add chore'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
             </RNView>
+            </ScrollView>
           </RNView>
         </KeyboardAvoidingView>
       </TouchableWithoutFeedback>
@@ -738,7 +926,7 @@ export default function ChoresScreen() {
         <RNView style={styles.centeredMessage}>
           <Text style={styles.title}>Join or create a house</Text>
           <Text style={styles.description}>
-            Chores live inside a house. Once you join or create a house, you’ll see all shared
+            Chores live inside a house. Once you join or create a house, you'll see all shared
             chores here.
           </Text>
         </RNView>
@@ -855,6 +1043,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 6,
   },
   lastCompletedText: {
+    fontSize: 12,
+    color: MUTED_TEXT,
+    marginTop: 4,
+  },
+  choreDueText: {
     fontSize: 12,
     color: MUTED_TEXT,
     marginTop: 4,
@@ -1044,6 +1237,9 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 28,
   },
+  modalScrollContent: {
+    paddingBottom: 8,
+  },
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
@@ -1055,6 +1251,64 @@ const styles = StyleSheet.create({
     color: MUTED_TEXT,
     marginBottom: 4,
     marginTop: 8,
+  },
+  helperText: {
+    fontSize: 12,
+    color: MUTED_TEXT,
+    marginBottom: 6,
+  },
+  sliderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  sliderValue: {
+    width: 32,
+    fontSize: 16,
+    fontWeight: '600',
+    color: BUTLER_BLUE,
+    textAlign: 'center',
+    marginRight: 8,
+  },
+  slider: {
+    flex: 1,
+    height: 40,
+  },
+  stepIndicatorRow: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  stepDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#E5E7EB',
+    marginRight: 6,
+  },
+  stepDotActive: {
+    backgroundColor: BUTLER_BLUE,
+  },
+  stepDotComplete: {
+    backgroundColor: '#93C5FD',
+  },
+  reviewCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginTop: 12,
+  },
+  reviewTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: BUTLER_BLUE,
+    marginBottom: 8,
+  },
+  reviewItem: {
+    fontSize: 13,
+    color: MUTED_TEXT,
+    marginBottom: 4,
   },
   input: {
     borderRadius: 12,
@@ -1115,12 +1369,19 @@ const styles = StyleSheet.create({
   modalCancelButton: {
     backgroundColor: '#E5E7EB',
   },
+  modalSecondaryButton: {
+    backgroundColor: '#E5E7EB',
+  },
   modalPrimaryButton: {
     backgroundColor: BUTLER_BLUE,
   },
   modalCancelText: {
     color: BUTLER_BLUE,
     fontWeight: '500',
+  },
+  modalSecondaryText: {
+    color: BUTLER_BLUE,
+    fontWeight: '600',
   },
   modalPrimaryText: {
     color: '#FFFFFF',

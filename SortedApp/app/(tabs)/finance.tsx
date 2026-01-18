@@ -52,6 +52,9 @@ export default function FinanceScreen() {
   const [members, setMembers] = useState<MemberOption[]>([]);
 
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<TransactionData | null>(
+    null
+  );
   const [amountInput, setAmountInput] = useState('');
   const [descriptionInput, setDescriptionInput] = useState('');
   const [splitWithInput, setSplitWithInput] = useState<string[]>([]);
@@ -185,10 +188,26 @@ export default function FinanceScreen() {
       Alert.alert('Finance', 'You must be signed in to add a transaction.');
       return;
     }
+    setEditingTransaction(null);
     setAmountInput('');
     setDescriptionInput('');
     const defaultSplit = Array.from(
       new Set([...members.map((member) => member.userId), currentUserId])
+    );
+    setSplitWithInput(defaultSplit);
+    setModalVisible(true);
+  };
+
+  const openEditModal = (transaction: TransactionData) => {
+    if (!currentUserId) {
+      Alert.alert('Finance', 'You must be signed in to edit a transaction.');
+      return;
+    }
+    setEditingTransaction(transaction);
+    setAmountInput(String(transaction.amount));
+    setDescriptionInput(transaction.description);
+    const defaultSplit = Array.from(
+      new Set([...(transaction.splitWith || []), currentUserId])
     );
     setSplitWithInput(defaultSplit);
     setModalVisible(true);
@@ -232,16 +251,34 @@ export default function FinanceScreen() {
 
     setSubmitting(true);
     try {
-      await financeService.addTransaction(
-        houseId,
-        currentUserId,
-        amount,
-        description,
-        finalSplit
-      );
+      if (editingTransaction) {
+        await financeService.updateTransaction(
+          houseId,
+          editingTransaction.transactionId,
+          currentUserId,
+          {
+            amount,
+            description,
+            splitWith: finalSplit,
+          }
+        );
+      } else {
+        await financeService.addTransaction(
+          houseId,
+          currentUserId,
+          amount,
+          description,
+          finalSplit
+        );
+      }
       setModalVisible(false);
     } catch (err: any) {
-      handleError(err, 'Unable to add transaction. Please try again.');
+      handleError(
+        err,
+        editingTransaction
+          ? 'Unable to update transaction. Please try again.'
+          : 'Unable to add transaction. Please try again.'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -483,6 +520,14 @@ export default function FinanceScreen() {
                 <Text style={styles.confirmButtonText}>Confirm</Text>
               </TouchableOpacity>
             )}
+            {isPayer && (
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => openEditModal(item)}
+              >
+                <Text style={styles.editButtonText}>Edit</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={styles.deleteButton}
               onPress={() => handleDeleteTransaction(item)}
@@ -524,6 +569,9 @@ export default function FinanceScreen() {
         >
           <RNView style={styles.modalContent}>
             <Text style={styles.modalTitle}>Add Transaction</Text>
+            {editingTransaction && (
+              <Text style={styles.modalSubtitle}>Editing resets confirmations.</Text>
+            )}
 
             <Text style={styles.modalLabel}>Amount</Text>
             <TextInput
@@ -600,7 +648,9 @@ export default function FinanceScreen() {
                 {submitting ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.modalPrimaryText}>Add transaction</Text>
+                  <Text style={styles.modalPrimaryText}>
+                    {editingTransaction ? 'Save changes' : 'Add transaction'}
+                  </Text>
                 )}
               </TouchableOpacity>
             </RNView>
@@ -838,6 +888,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  editButton: {
+    backgroundColor: '#E5E7EB',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginRight: 8,
+  },
+  editButtonText: {
+    color: BUTLER_BLUE,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   emptyStateContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -898,6 +960,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: BUTLER_BLUE,
     marginBottom: 16,
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: MUTED_TEXT,
+    marginBottom: 8,
   },
   modalLabel: {
     fontSize: 13,

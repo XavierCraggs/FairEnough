@@ -19,6 +19,14 @@ import {
   } from 'firebase/firestore';
   import { db } from '../api/firebase';
   import notificationService from './notificationService';
+
+  export const ROLLING_WINDOW_DAYS = 28;
+
+  const startOfDay = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  const addDays = (date: Date, days: number) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
   
   /**
    * Chore data structure stored in Firestore
@@ -34,10 +42,21 @@ import {
     status: 'pending' | 'completed' | 'overdue';
     lastCompletedBy: string | null; // UID of last user who completed it
     lastCompletedAt: Timestamp | null;
+    nextDueAt?: Timestamp | null;
     totalCompletions: number; // Track how many times this chore has been done
     createdBy: string;
     createdAt: any;
     updatedAt: any;
+  }
+
+  export interface ChoreCompletion {
+    completionId: string;
+    choreId: string;
+    choreTitle: string;
+    houseId: string;
+    userId: string;
+    points: number;
+    completedAt: Timestamp;
   }
   
   /**
@@ -89,10 +108,10 @@ import {
     async addChore(input: CreateChoreInput): Promise<ChoreData> {
       try {
         // Validate inputs
-        if (!input.houseId || !input.title.trim() || input.points < 0) {
+        if (!input.houseId || !input.title.trim() || !this.isValidPoints(input.points)) {
           throw this.createError(
             ChoreServiceErrorCode.INVALID_INPUT,
-            'House ID, title, and valid points are required'
+            'House ID, title, and a difficulty score between 1 and 10 are required'
           );
         }
   
@@ -101,6 +120,7 @@ import {
   
         // Create chore document
         const choreRef = collection(db, 'houses', input.houseId, 'chores');
+        const now = new Date();
         const newChore = {
           houseId: input.houseId,
           title: input.title.trim(),
@@ -111,6 +131,7 @@ import {
           status: 'pending' as const,
           lastCompletedBy: null,
           lastCompletedAt: null,
+          nextDueAt: Timestamp.fromDate(startOfDay(now)),
           totalCompletions: 0,
           createdBy: input.createdBy,
           createdAt: serverTimestamp(),
@@ -119,9 +140,22 @@ import {
   
         const docRef = await addDoc(choreRef, newChore);
   
+        let assignedTo = newChore.assignedTo;
+        if (!assignedTo) {
+          const autoAssignee = await this.pickFairAssignee(input.houseId, null);
+          if (autoAssignee) {
+            await updateDoc(docRef, {
+              assignedTo: autoAssignee,
+              updatedAt: serverTimestamp(),
+            });
+            assignedTo = autoAssignee;
+          }
+        }
+
         return {
           choreId: docRef.id,
           ...newChore,
+          assignedTo,
         } as ChoreData;
       } catch (error) {
         if (this.isChoreServiceError(error)) {
@@ -166,6 +200,7 @@ import {
         await this.verifyUserInHouse(userId, houseId);
   
         // Use transaction for atomicity
+        const completedAt = new Date();
         const choreData = await runTransaction(db, async (transaction) => {
           // Get chore document
           const choreRef = doc(db, 'houses', houseId, 'chores', choreId);
@@ -187,6 +222,11 @@ import {
             );
           }
 
+          const nextDueAt =
+            chore.frequency === 'one-time'
+              ? null
+              : this.getNextDueTimestamp(chore.frequency, completedAt);
+
           // Update chore document
           transaction.update(choreRef, {
             status: 'completed',
@@ -194,13 +234,26 @@ import {
             lastCompletedAt: serverTimestamp(),
             totalCompletions: increment(1),
             updatedAt: serverTimestamp(),
+            nextDueAt,
           });
-  
+
           // Update user's total points
           const userRef = doc(db, 'users', userId);
           transaction.update(userRef, {
             totalPoints: increment(chore.points),
             updatedAt: serverTimestamp(),
+          });
+
+          const completionRef = doc(
+            collection(db, 'houses', houseId, 'choreCompletions')
+          );
+          transaction.set(completionRef, {
+            houseId,
+            choreId,
+            choreTitle: chore.title,
+            userId,
+            points: chore.points,
+            completedAt: serverTimestamp(),
           });
   
           // Return updated chore data
@@ -211,8 +264,15 @@ import {
             lastCompletedBy: userId,
             lastCompletedAt: Timestamp.now(),
             totalCompletions: chore.totalCompletions + 1,
+            nextDueAt: nextDueAt ?? null,
           } as ChoreData;
         });
+
+        if (choreData.frequency !== 'one-time') {
+          await this.assignChoreByFairness(houseId, choreId, {
+            excludeUserId: userId,
+          });
+        }
   
         try {
           await notificationService.sendAlfredNudge(houseId, userId, 'CHORE_DUE', {
@@ -345,12 +405,32 @@ import {
       try {
         // Verify user is in the house
         await this.verifyUserInHouse(userId, houseId);
-  
+
         const choreRef = doc(db, 'houses', houseId, 'chores', choreId);
-        await updateDoc(choreRef, {
+        if (typeof updates.points === 'number' && !this.isValidPoints(updates.points)) {
+          throw this.createError(
+            ChoreServiceErrorCode.INVALID_INPUT,
+            'Difficulty score must be between 1 and 10.'
+          );
+        }
+
+        const patch: any = {
           ...updates,
           updatedAt: serverTimestamp(),
-        });
+        };
+
+        if (updates.frequency) {
+          const choreDoc = await getDoc(choreRef);
+          const chore = choreDoc.data() as ChoreData | undefined;
+          const referenceDate =
+            chore?.lastCompletedAt?.toDate?.() || new Date();
+          patch.nextDueAt =
+            updates.frequency === 'one-time'
+              ? null
+              : this.getNextDueTimestamp(updates.frequency, referenceDate);
+        }
+
+        await updateDoc(choreRef, patch);
       } catch (error) {
         throw this.createError(
           ChoreServiceErrorCode.TRANSACTION_FAILED,
@@ -516,54 +596,141 @@ import {
         totalPoints: number;
         deviation: number; // Positive means above average, negative means below
       }>;
+      windowDays: number;
     }> {
       try {
-        // Get house data to get members list
-        const houseDoc = await getDoc(doc(db, 'houses', houseId));
-        if (!houseDoc.exists()) {
-          throw this.createError(
-            ChoreServiceErrorCode.INVALID_INPUT,
-            'House not found'
-          );
-        }
-  
-        const members = houseDoc.data().members as string[];
-  
-        // Get all member data
+        const members = await this.getHouseMembers(houseId);
+        const since = addDays(new Date(), -ROLLING_WINDOW_DAYS);
+        const pointsMap = await this.getRollingPointsMap(houseId, since);
+
         const memberStats = await Promise.all(
           members.map(async (userId) => {
             const userDoc = await getDoc(doc(db, 'users', userId));
             const userData = userDoc.data();
+            const rollingPoints = pointsMap.get(userId) ?? 0;
             return {
               userId,
               userName: userData?.name || 'Unknown',
-              totalPoints: userData?.totalPoints || 0,
-              deviation: 0, // Will calculate after getting average
+              totalPoints: rollingPoints,
+              deviation: 0,
             };
           })
         );
-  
-        // Calculate average
+
         const totalPoints = memberStats.reduce((sum, member) => sum + member.totalPoints, 0);
         const averagePoints = members.length > 0 ? totalPoints / members.length : 0;
-  
-        // Calculate deviations
+
         memberStats.forEach((member) => {
           member.deviation = member.totalPoints - averagePoints;
         });
-  
-      return {
-        averagePoints,
-        memberStats,
-      };
-    } catch (error) {
-      throw this.createError(
-        ChoreServiceErrorCode.UNKNOWN_ERROR,
-        'Failed to calculate house fairness.',
-        error
-      );
+
+        return {
+          averagePoints,
+          memberStats,
+          windowDays: ROLLING_WINDOW_DAYS,
+        };
+      } catch (error) {
+        throw this.createError(
+          ChoreServiceErrorCode.UNKNOWN_ERROR,
+          'Failed to calculate house fairness.',
+          error
+        );
+      }
     }
-  }
+
+    async autoAssignDueChores(houseId: string, userId: string): Promise<void> {
+      try {
+        if (!houseId || !userId) return;
+
+        await this.verifyUserInHouse(userId, houseId);
+        const members = await this.getHouseMembers(houseId);
+        if (!members.length) return;
+
+        const since = addDays(new Date(), -ROLLING_WINDOW_DAYS);
+        const pointsMap = await this.getRollingPointsMap(houseId, since);
+        const chores = await this.getHouseChores(houseId);
+        const today = startOfDay(new Date());
+
+        const batch = writeBatch(db);
+        let updates = 0;
+
+        chores.forEach((chore) => {
+          if (chore.frequency === 'one-time' && chore.status === 'completed') {
+            return;
+          }
+
+          const dueDate = this.getChoreDueDate(chore, today);
+          const isDue = dueDate ? dueDate <= today : chore.status !== 'completed';
+
+          const shouldKeepManualAssignment =
+            !!chore.assignedTo && !chore.lastCompletedAt;
+
+          const shouldAssign = isDue && !shouldKeepManualAssignment;
+          const targetAssignee = shouldAssign
+            ? this.pickFairAssigneeFromList(
+                members,
+                pointsMap,
+                chore.lastCompletedBy ?? null
+              )
+            : chore.assignedTo;
+
+          const nextDueAt =
+            chore.nextDueAt ?? (dueDate ? Timestamp.fromDate(dueDate) : null);
+
+          const nextStatus = isDue ? 'pending' : chore.status;
+
+          if (
+            targetAssignee !== chore.assignedTo ||
+            nextStatus !== chore.status ||
+            (nextDueAt && !chore.nextDueAt)
+          ) {
+            const choreRef = doc(db, 'houses', houseId, 'chores', chore.choreId);
+            batch.update(choreRef, {
+              assignedTo: targetAssignee ?? null,
+              status: nextStatus,
+              nextDueAt: nextDueAt ?? null,
+              updatedAt: serverTimestamp(),
+            });
+            updates += 1;
+          }
+        });
+
+        if (updates > 0) {
+          await batch.commit();
+        }
+      } catch (error) {
+        console.error('Failed to auto-assign due chores:', error);
+      }
+    }
+
+    async assignChoreByFairness(
+      houseId: string,
+      choreId: string,
+      options?: { excludeUserId?: string }
+    ): Promise<void> {
+      const members = await this.getHouseMembers(houseId);
+      if (!members.length) return;
+
+      const since = addDays(new Date(), -ROLLING_WINDOW_DAYS);
+      const pointsMap = await this.getRollingPointsMap(houseId, since);
+      const target = this.pickFairAssigneeFromList(
+        members,
+        pointsMap,
+        options?.excludeUserId ?? null
+      );
+      if (!target) return;
+
+      const choreRef = doc(db, 'houses', houseId, 'chores', choreId);
+      const choreDoc = await getDoc(choreRef);
+      if (!choreDoc.exists()) return;
+      const chore = choreDoc.data() as ChoreData;
+      if (chore.assignedTo === target) return;
+
+      await updateDoc(choreRef, {
+        assignedTo: target,
+        updatedAt: serverTimestamp(),
+      });
+    }
 
     async notifyOverdueChores(houseId: string, userId: string): Promise<void> {
       try {
@@ -572,29 +739,18 @@ import {
         }
 
         const chores = await this.getHouseChores(houseId);
-        const today = new Date();
-        const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const today = startOfDay(new Date());
 
         const isOverdue = (chore: ChoreData) => {
+          if (chore.status === 'completed' && chore.frequency !== 'one-time') {
+            const dueDate = this.getChoreDueDate(chore, today);
+            return dueDate ? dueDate < today : false;
+          }
           if (chore.status === 'completed') {
             return false;
           }
-          const lastCompleted = chore.lastCompletedAt?.toDate
-            ? chore.lastCompletedAt.toDate()
-            : null;
-          if (chore.frequency === 'daily') {
-            return !lastCompleted || lastCompleted < startOfToday;
-          }
-          if (chore.frequency === 'weekly') {
-            if (!lastCompleted) return true;
-            const nextDue = new Date(lastCompleted);
-            nextDue.setDate(nextDue.getDate() + 7);
-            return nextDue < startOfToday;
-          }
-          if (chore.frequency === 'one-time') {
-            return chore.status === 'pending';
-          }
-          return false;
+          const dueDate = this.getChoreDueDate(chore, today);
+          return dueDate ? dueDate < today : false;
         };
 
         const overdueChores = chores.filter(isOverdue);
@@ -620,6 +776,108 @@ import {
       } catch (error) {
         console.error('Failed to notify overdue chores:', error);
       }
+    }
+
+    private isValidPoints(points: number): boolean {
+      return Number.isFinite(points) && points >= 1 && points <= 10;
+    }
+
+    private getNextDueTimestamp(
+      frequency: ChoreData['frequency'],
+      referenceDate: Date
+    ): Timestamp | null {
+      const base = startOfDay(referenceDate);
+      if (frequency === 'daily') {
+        return Timestamp.fromDate(addDays(base, 1));
+      }
+      if (frequency === 'weekly') {
+        return Timestamp.fromDate(addDays(base, 7));
+      }
+      return null;
+    }
+
+    private getChoreDueDate(chore: ChoreData, referenceDate: Date): Date | null {
+      if (chore.nextDueAt?.toDate) {
+        return startOfDay(chore.nextDueAt.toDate());
+      }
+      if (chore.frequency === 'one-time') {
+        return chore.status === 'completed' ? null : startOfDay(referenceDate);
+      }
+      if (chore.lastCompletedAt?.toDate) {
+        const lastCompleted = startOfDay(chore.lastCompletedAt.toDate());
+        const daysToAdd = chore.frequency === 'daily' ? 1 : 7;
+        return addDays(lastCompleted, daysToAdd);
+      }
+      if (chore.createdAt?.toDate) {
+        return startOfDay(chore.createdAt.toDate());
+      }
+      return startOfDay(referenceDate);
+    }
+
+    private async getRollingPointsMap(
+      houseId: string,
+      sinceDate: Date
+    ): Promise<Map<string, number>> {
+      const pointsMap = new Map<string, number>();
+      const completionsRef = collection(db, 'houses', houseId, 'choreCompletions');
+      const q = query(
+        completionsRef,
+        where('completedAt', '>=', Timestamp.fromDate(sinceDate)),
+        orderBy('completedAt', 'desc')
+      );
+      const snapshot = await getDocs(q);
+
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as ChoreCompletion;
+        const current = pointsMap.get(data.userId) ?? 0;
+        pointsMap.set(data.userId, current + (data.points || 0));
+      });
+
+      return pointsMap;
+    }
+
+    private async getHouseMembers(houseId: string): Promise<string[]> {
+      const houseDoc = await getDoc(doc(db, 'houses', houseId));
+      if (!houseDoc.exists()) {
+        throw this.createError(
+          ChoreServiceErrorCode.INVALID_INPUT,
+          'House not found'
+        );
+      }
+
+      const members = houseDoc.data().members as string[] | undefined;
+      return members ?? [];
+    }
+
+    private pickFairAssigneeFromList(
+      members: string[],
+      pointsMap: Map<string, number>,
+      excludeUserId: string | null
+    ): string | null {
+      const available = members.filter((memberId) => memberId !== excludeUserId);
+      const pool = available.length ? available : members;
+      if (!pool.length) {
+        return null;
+      }
+      return [...pool].sort((a, b) => {
+        const pointsA = pointsMap.get(a) ?? 0;
+        const pointsB = pointsMap.get(b) ?? 0;
+        if (pointsA !== pointsB) {
+          return pointsA - pointsB;
+        }
+        return a.localeCompare(b);
+      })[0];
+    }
+
+    private async pickFairAssignee(
+      houseId: string,
+      excludeUserId: string | null
+    ): Promise<string | null> {
+      const members = await this.getHouseMembers(houseId);
+      if (!members.length) return null;
+      const since = addDays(new Date(), -ROLLING_WINDOW_DAYS);
+      const pointsMap = await this.getRollingPointsMap(houseId, since);
+      return this.pickFairAssigneeFromList(members, pointsMap, excludeUserId);
     }
   
     /**

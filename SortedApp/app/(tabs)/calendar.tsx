@@ -9,6 +9,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -94,6 +95,7 @@ export default function CalendarScreen() {
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
 
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalendarEventData | null>(null);
   const [titleInput, setTitleInput] = useState('');
   const [descriptionInput, setDescriptionInput] = useState('');
   const [selectedDate, setSelectedDate] = useState<Date>(normalizeDate(new Date()));
@@ -128,6 +130,15 @@ export default function CalendarScreen() {
     return () => unsubscribe();
   }, [houseId]);
 
+  useEffect(() => {
+    const subscription = Keyboard.addListener('keyboardDidShow', () => {
+      setShowDatePicker(false);
+      setShowEndDatePicker(false);
+    });
+
+    return () => subscription.remove();
+  }, []);
+
   const handleError = useCallback((err: any, fallbackMessage: string) => {
     const serviceError = err as CalendarServiceError;
     const message = serviceError?.message || fallbackMessage;
@@ -139,14 +150,40 @@ export default function CalendarScreen() {
       Alert.alert('Calendar', 'You must be signed in to add an event.');
       return;
     }
+    setEditingEvent(null);
     setTitleInput('');
     setDescriptionInput('');
     setSelectedDate(normalizeDate(new Date()));
-    setShowDatePicker(Platform.OS === 'ios');
+    setShowDatePicker(false);
     setRecurrenceInput('none');
     setEndDateEnabled(false);
     setEndDateInput(null);
     setShowEndDatePicker(false);
+    setModalVisible(true);
+  };
+
+  const openEditModal = (event: CalendarEventData) => {
+    if (!currentUserId) {
+      Alert.alert('Calendar', 'You must be signed in to edit an event.');
+      return;
+    }
+    setEditingEvent(event);
+    setTitleInput(event.title);
+    setDescriptionInput(event.description || '');
+    setSelectedDate(normalizeDate(event.startDate.toDate()));
+    setShowDatePicker(false);
+    setShowEndDatePicker(false);
+    const frequency = event.recurrence?.frequency || 'none';
+    setRecurrenceInput(frequency);
+    const endDate =
+      event.recurrence?.endDate?.toDate && event.recurrence.endDate.toDate();
+    if (endDate) {
+      setEndDateEnabled(true);
+      setEndDateInput(normalizeDate(endDate));
+    } else {
+      setEndDateEnabled(false);
+      setEndDateInput(null);
+    }
     setModalVisible(true);
   };
 
@@ -191,21 +228,44 @@ export default function CalendarScreen() {
 
     setSubmitting(true);
     try {
-      await calendarService.addEvent(
-        houseId,
-        currentUserId,
-        titleInput,
-        eventDate,
-        descriptionInput,
-        {
-          frequency: recurrenceInput,
-          interval: 1,
-          endDate: safeEndDate,
-        }
-      );
+      if (editingEvent) {
+        await calendarService.updateEvent(
+          houseId,
+          editingEvent.eventId,
+          {
+            title: titleInput,
+            description: descriptionInput,
+            startDate: eventDate,
+            recurrence: {
+              frequency: recurrenceInput,
+              interval: 1,
+              endDate: safeEndDate,
+            },
+          },
+          currentUserId
+        );
+      } else {
+        await calendarService.addEvent(
+          houseId,
+          currentUserId,
+          titleInput,
+          eventDate,
+          descriptionInput,
+          {
+            frequency: recurrenceInput,
+            interval: 1,
+            endDate: safeEndDate,
+          }
+        );
+      }
       setModalVisible(false);
     } catch (err: any) {
-      handleError(err, 'Unable to add event. Please try again.');
+      handleError(
+        err,
+        editingEvent
+          ? 'Unable to update event. Please try again.'
+          : 'Unable to add event. Please try again.'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -409,6 +469,12 @@ export default function CalendarScreen() {
         </RNView>
         <RNView style={styles.eventActionsRow}>
           <TouchableOpacity
+            style={styles.editButton}
+            onPress={() => openEditModal(item.event)}
+          >
+            <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
             style={styles.deleteButton}
             onPress={() => handleDeleteEvent(item.event)}
           >
@@ -522,159 +588,193 @@ export default function CalendarScreen() {
         <KeyboardAvoidingView
           style={styles.modalBackdrop}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
         >
           <RNView style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Add Event</Text>
-
-            <Text style={styles.modalLabel}>Title</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Rent due"
-              placeholderTextColor={MUTED_TEXT}
-              value={titleInput}
-              onChangeText={setTitleInput}
-            />
-
-            <Text style={styles.modalLabel}>Description</Text>
-            <TextInput
-              style={[styles.input, styles.inputMultiline]}
-              placeholder="Any details or reminders"
-              placeholderTextColor={MUTED_TEXT}
-              value={descriptionInput}
-              onChangeText={setDescriptionInput}
-              multiline
-            />
-
-            <Text style={styles.modalLabel}>Date</Text>
-            <Pressable
-              style={styles.datePickerButton}
-              onPress={() => setShowDatePicker(true)}
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
             >
-              <Text style={styles.datePickerText}>{formatReadableDate(selectedDate)}</Text>
-            </Pressable>
-            {showDatePicker && (
-              <DateTimePicker
-                value={selectedDate}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                onChange={handleDateChange}
+              <Text style={styles.modalTitle}>Add Event</Text>
+              {editingEvent && (
+                <Text style={styles.modalSubtitle}>Edits apply to the whole series.</Text>
+              )}
+
+              <Text style={styles.modalLabel}>Title</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Rent due"
+                placeholderTextColor={MUTED_TEXT}
+                value={titleInput}
+                onChangeText={setTitleInput}
+                onFocus={() => {
+                  setShowDatePicker(false);
+                  setShowEndDatePicker(false);
+                }}
               />
-            )}
 
-            <Text style={styles.modalLabel}>Repeat</Text>
-            <RNView style={styles.dropdownContainer}>
-              {RECURRENCE_OPTIONS.map((option) => (
-                <Pressable
-                  key={option.value}
-                  style={[
-                    styles.dropdownChip,
-                    recurrenceInput === option.value && styles.dropdownChipActive,
-                  ]}
-                  onPress={() => setRecurrenceInput(option.value)}
-                >
-                  <Text
-                    style={[
-                      styles.dropdownChipText,
-                      recurrenceInput === option.value && styles.dropdownChipTextActive,
-                    ]}
-                  >
-                    {option.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </RNView>
+              <Text style={styles.modalLabel}>Description</Text>
+              <TextInput
+                style={[styles.input, styles.inputMultiline]}
+                placeholder="Any details or reminders"
+                placeholderTextColor={MUTED_TEXT}
+                value={descriptionInput}
+                onChangeText={setDescriptionInput}
+                onFocus={() => {
+                  setShowDatePicker(false);
+                  setShowEndDatePicker(false);
+                }}
+                multiline
+              />
 
-            {recurrenceInput === 'none' ? (
-              <Text style={styles.modalHelperText}>
-                Recurring events can include an end date.
-              </Text>
-            ) : (
-              <>
-                <Text style={styles.modalLabel}>Repeat ends</Text>
-                <RNView style={styles.dropdownContainer}>
-                  <Pressable
-                    style={[
-                      styles.dropdownChip,
-                      !endDateEnabled && styles.dropdownChipActive,
-                    ]}
-                    onPress={() => {
-                      setEndDateEnabled(false);
-                      setEndDateInput(null);
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.dropdownChipText,
-                        !endDateEnabled && styles.dropdownChipTextActive,
-                      ]}
-                    >
-                      No end
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      styles.dropdownChip,
-                      endDateEnabled && styles.dropdownChipActive,
-                    ]}
-                    onPress={() => {
-                      setEndDateEnabled(true);
-                      setEndDateInput((current) => current ?? selectedDate);
-                      setShowEndDatePicker(true);
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.dropdownChipText,
-                        endDateEnabled && styles.dropdownChipTextActive,
-                      ]}
-                    >
-                      End date
-                    </Text>
-                  </Pressable>
+              <Text style={styles.modalLabel}>Date</Text>
+              <Pressable
+                style={styles.datePickerButton}
+                onPress={() => {
+                  setShowEndDatePicker(false);
+                  setShowDatePicker((prev) => !prev);
+                }}
+              >
+                <Text style={styles.datePickerText}>{formatReadableDate(selectedDate)}</Text>
+              </Pressable>
+              {showDatePicker && (
+                <RNView style={styles.datePickerShell}>
+                  <DateTimePicker
+                    value={selectedDate}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                    themeVariant={Platform.OS === 'ios' ? 'light' : undefined}
+                    textColor={Platform.OS === 'ios' ? BUTLER_BLUE : undefined}
+                    onChange={handleDateChange}
+                  />
                 </RNView>
-                {endDateEnabled && (
-                  <>
-                    <Pressable
-                      style={styles.datePickerButton}
-                      onPress={() => setShowEndDatePicker(true)}
+              )}
+
+              <Text style={styles.modalLabel}>Repeat</Text>
+              <RNView style={styles.dropdownContainer}>
+                {RECURRENCE_OPTIONS.map((option) => (
+                  <Pressable
+                    key={option.value}
+                    style={[
+                      styles.dropdownChip,
+                      recurrenceInput === option.value && styles.dropdownChipActive,
+                    ]}
+                    onPress={() => setRecurrenceInput(option.value)}
+                  >
+                    <Text
+                      style={[
+                        styles.dropdownChipText,
+                        recurrenceInput === option.value && styles.dropdownChipTextActive,
+                      ]}
                     >
-                      <Text style={styles.datePickerText}>
-                        {endDateInput ? formatReadableDate(endDateInput) : 'Select end date'}
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </RNView>
+
+              {recurrenceInput === 'none' ? (
+                <Text style={styles.modalHelperText}>
+                  Recurring events can include an end date.
+                </Text>
+              ) : (
+                <>
+                  <Text style={styles.modalLabel}>Repeat ends</Text>
+                  <RNView style={styles.dropdownContainer}>
+                    <Pressable
+                      style={[
+                        styles.dropdownChip,
+                        !endDateEnabled && styles.dropdownChipActive,
+                      ]}
+                      onPress={() => {
+                        setEndDateEnabled(false);
+                        setEndDateInput(null);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.dropdownChipText,
+                          !endDateEnabled && styles.dropdownChipTextActive,
+                        ]}
+                      >
+                        No end
                       </Text>
                     </Pressable>
-                    {showEndDatePicker && endDateInput && (
-                      <DateTimePicker
-                        value={endDateInput}
-                        mode="date"
-                        display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                        onChange={handleEndDateChange}
-                      />
-                    )}
-                  </>
-                )}
-              </>
-            )}
+                    <Pressable
+                      style={[
+                        styles.dropdownChip,
+                        endDateEnabled && styles.dropdownChipActive,
+                      ]}
+                      onPress={() => {
+                        setEndDateEnabled(true);
+                        setEndDateInput((current) => current ?? selectedDate);
+                        setShowDatePicker(false);
+                        setShowEndDatePicker(true);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.dropdownChipText,
+                          endDateEnabled && styles.dropdownChipTextActive,
+                        ]}
+                      >
+                        End date
+                      </Text>
+                    </Pressable>
+                  </RNView>
+                  {endDateEnabled && (
+                    <>
+                      <Pressable
+                        style={styles.datePickerButton}
+                        onPress={() => {
+                          setShowDatePicker(false);
+                          setShowEndDatePicker((prev) => !prev);
+                        }}
+                      >
+                        <Text style={styles.datePickerText}>
+                          {endDateInput ? formatReadableDate(endDateInput) : 'Select end date'}
+                        </Text>
+                      </Pressable>
+                      {showEndDatePicker && endDateInput && (
+                        <RNView style={styles.datePickerShell}>
+                          <DateTimePicker
+                            value={endDateInput}
+                            mode="date"
+                            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                            themeVariant={Platform.OS === 'ios' ? 'light' : undefined}
+                            textColor={Platform.OS === 'ios' ? BUTLER_BLUE : undefined}
+                            onChange={handleEndDateChange}
+                          />
+                        </RNView>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
 
-            <RNView style={styles.modalActionsRow}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalCancelButton]}
-                onPress={closeModal}
-                disabled={submitting}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalPrimaryButton]}
-                onPress={handleSubmit}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.modalPrimaryText}>Add event</Text>
-                )}
-              </TouchableOpacity>
-            </RNView>
+              <RNView style={styles.modalActionsRow}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalCancelButton]}
+                  onPress={closeModal}
+                  disabled={submitting}
+                >
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalPrimaryButton]}
+                  onPress={handleSubmit}
+                  disabled={submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalPrimaryText}>
+                      {editingEvent ? 'Save changes' : 'Add event'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </RNView>
+            </ScrollView>
           </RNView>
         </KeyboardAvoidingView>
       </TouchableWithoutFeedback>
@@ -1033,6 +1133,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
   },
+  editButton: {
+    backgroundColor: '#E5E7EB',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginRight: 8,
+  },
+  editButtonText: {
+    color: BUTLER_BLUE,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   deleteButton: {
     backgroundColor: '#FEE2E2',
     paddingHorizontal: 12,
@@ -1098,12 +1210,18 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     padding: 20,
     paddingBottom: 28,
+    maxHeight: '90%',
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
     color: BUTLER_BLUE,
     marginBottom: 16,
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: MUTED_TEXT,
+    marginBottom: 8,
   },
   modalLabel: {
     fontSize: 13,
@@ -1115,6 +1233,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: MUTED_TEXT,
     marginTop: 6,
+  },
+  modalScrollContent: {
+    paddingBottom: 12,
   },
   input: {
     borderRadius: 12,
@@ -1161,6 +1282,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
     backgroundColor: '#FFFFFF',
+  },
+  datePickerShell: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginTop: 8,
+    overflow: 'hidden',
   },
   datePickerText: {
     fontSize: 14,

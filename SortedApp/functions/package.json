@@ -1,0 +1,13 @@
+{
+  "name": "sorted-functions",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "18"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "firebase-functions": "^4.4.1",
+    "node-fetch": "^3.3.2"
+  }
+}

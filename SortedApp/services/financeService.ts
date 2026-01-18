@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../api/firebase';
 import notificationService from './notificationService';
+import { calculateSimplifiedDebts } from '../utils/finance';
 
 /**
  * Transaction data structure stored in Firestore
@@ -65,7 +66,6 @@ export interface FinanceServiceError {
   originalError?: any;
 }
 
-const CURRENCY_EPSILON = 0.005;
 
 /**
  * Finance service for managing house transactions and debts
@@ -176,6 +176,115 @@ class FinanceService {
       throw this.createError(
         FinanceServiceErrorCode.TRANSACTION_FAILED,
         'Failed to add transaction. Please try again.',
+        error
+      );
+    }
+  }
+
+  /**
+   * Update an existing transaction
+   */
+  async updateTransaction(
+    houseId: string,
+    transactionId: string,
+    userId: string,
+    updates: {
+      amount: number;
+      description: string;
+      splitWith: string[];
+    }
+  ): Promise<TransactionData> {
+    try {
+      if (!houseId || !transactionId || !userId) {
+        throw this.createError(
+          FinanceServiceErrorCode.INVALID_INPUT,
+          'House ID, transaction ID, and user ID are required.'
+        );
+      }
+
+      if (!Number.isFinite(updates.amount) || updates.amount < 0) {
+        throw this.createError(
+          FinanceServiceErrorCode.INVALID_INPUT,
+          'Amount must be a valid number (0 or more).'
+        );
+      }
+
+      const normalizedSplit = Array.from(
+        new Set((updates.splitWith || []).filter((id) => !!id))
+      );
+      if (!normalizedSplit.length) {
+        normalizedSplit.push(userId);
+      }
+      if (!normalizedSplit.includes(userId)) {
+        normalizedSplit.push(userId);
+      }
+
+      await this.verifyUserInHouse(userId, houseId);
+
+      const updatedTransaction = await runTransaction(db, async (transaction) => {
+        const transactionRef = doc(db, 'houses', houseId, 'transactions', transactionId);
+        const transactionDoc = await transaction.get(transactionRef);
+
+        if (!transactionDoc.exists()) {
+          throw this.createError(
+            FinanceServiceErrorCode.TRANSACTION_NOT_FOUND,
+            'Transaction not found.'
+          );
+        }
+
+        const current = transactionDoc.data() as TransactionData;
+        if (current.payerId !== userId) {
+          throw this.createError(
+            FinanceServiceErrorCode.UNAUTHORIZED,
+            'Only the payer can edit this transaction.'
+          );
+        }
+
+        const houseRef = doc(db, 'houses', houseId);
+        const houseDoc = await transaction.get(houseRef);
+        if (!houseDoc.exists()) {
+          throw this.createError(
+            FinanceServiceErrorCode.HOUSE_NOT_FOUND,
+            'House not found.'
+          );
+        }
+
+        const members = (houseDoc.data().members || []) as string[];
+        const invalidSplitMember = normalizedSplit.find(
+          (memberId) => !members.includes(memberId)
+        );
+        if (invalidSplitMember) {
+          throw this.createError(
+            FinanceServiceErrorCode.UNAUTHORIZED,
+            'One or more split members are not in this house.'
+          );
+        }
+
+        const payload = {
+          amount: Math.round(updates.amount * 100) / 100,
+          description: updates.description.trim(),
+          splitWith: normalizedSplit,
+          confirmedBy: [userId],
+          updatedAt: serverTimestamp(),
+        };
+
+        transaction.update(transactionRef, payload);
+
+        return {
+          ...current,
+          ...payload,
+          transactionId,
+        } as TransactionData;
+      });
+
+      return updatedTransaction;
+    } catch (error) {
+      if (this.isFinanceServiceError(error)) {
+        throw error;
+      }
+      throw this.createError(
+        FinanceServiceErrorCode.TRANSACTION_FAILED,
+        'Failed to update transaction. Please try again.',
         error
       );
     }
@@ -388,76 +497,14 @@ class FinanceService {
         memberNames.set(docSnap.id, data?.name || 'Unknown');
       });
 
-      const balances = new Map<string, number>();
-
-      transactions.forEach((transaction) => {
-        const splitWith = transaction.splitWith || [];
-        if (!splitWith.length) {
-          return;
-        }
-
-        const amount = Number(transaction.amount) || 0;
-        if (amount === 0) {
-          return;
-        }
-
-        const share = amount / splitWith.length;
-
-        splitWith.forEach((memberId) => {
-          const current = balances.get(memberId) ?? 0;
-          balances.set(memberId, this.roundCurrency(current - share));
-        });
-
-        const payerBalance = balances.get(transaction.payerId) ?? 0;
-        balances.set(
-          transaction.payerId,
-          this.roundCurrency(payerBalance + amount)
-        );
-      });
-
-      const creditors: Array<{ userId: string; amount: number }> = [];
-      const debtors: Array<{ userId: string; amount: number }> = [];
-
-      balances.forEach((balance, userId) => {
-        const rounded = this.roundCurrency(balance);
-        if (rounded > CURRENCY_EPSILON) {
-          creditors.push({ userId, amount: rounded });
-        } else if (rounded < -CURRENCY_EPSILON) {
-          debtors.push({ userId, amount: Math.abs(rounded) });
-        }
-      });
-
-      const debts: SimplifiedDebt[] = [];
-      let debtorIndex = 0;
-      let creditorIndex = 0;
-
-      while (debtorIndex < debtors.length && creditorIndex < creditors.length) {
-        const debtor = debtors[debtorIndex];
-        const creditor = creditors[creditorIndex];
-        const settleAmount = Math.min(debtor.amount, creditor.amount);
-
-        if (settleAmount > CURRENCY_EPSILON) {
-          debts.push({
-            from: debtor.userId,
-            fromName: memberNames.get(debtor.userId) || 'Unknown',
-            to: creditor.userId,
-            toName: memberNames.get(creditor.userId) || 'Unknown',
-            amount: this.roundCurrency(settleAmount),
-          });
-        }
-
-        debtor.amount = this.roundCurrency(debtor.amount - settleAmount);
-        creditor.amount = this.roundCurrency(creditor.amount - settleAmount);
-
-        if (debtor.amount <= CURRENCY_EPSILON) {
-          debtorIndex += 1;
-        }
-        if (creditor.amount <= CURRENCY_EPSILON) {
-          creditorIndex += 1;
-        }
-      }
-
-      return debts;
+      return calculateSimplifiedDebts(
+        transactions.map((transaction) => ({
+          payerId: transaction.payerId,
+          amount: transaction.amount,
+          splitWith: transaction.splitWith || [],
+        })),
+        (userId) => memberNames.get(userId) || 'Unknown'
+      );
     } catch (error) {
       if (this.isFinanceServiceError(error)) {
         throw error;
@@ -468,10 +515,6 @@ class FinanceService {
         error
       );
     }
-  }
-
-  private roundCurrency(value: number): number {
-    return Math.round(value * 100) / 100;
   }
 
   /**

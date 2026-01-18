@@ -13,6 +13,7 @@ import {
   updateDoc,
   Timestamp,
   limit,
+  where,
 } from 'firebase/firestore';
 import { db } from '../api/firebase';
 
@@ -243,23 +244,26 @@ class NotificationService {
       }
 
       const notificationsRef = collection(db, 'houses', houseId, 'notifications');
-      let q = query(
+      const q = query(
         notificationsRef,
-        where('type', '==', type),
         where('createdAt', '>=', Timestamp.fromDate(since)),
-        limit(1)
+        orderBy('createdAt', 'desc'),
+        limit(50)
       );
 
-      const metadataKeys = Object.keys(metadataFilter || {});
-      metadataKeys.forEach((key) => {
-        const value = metadataFilter[key];
-        if (value !== undefined) {
-          q = query(q, where(`metadata.${key}`, '==', value));
-        }
-      });
-
       const snapshot = await getDocs(q);
-      return !snapshot.empty;
+      if (snapshot.empty) {
+        return false;
+      }
+
+      const metadataKeys = Object.keys(metadataFilter || {});
+      return snapshot.docs.some((docSnap) => {
+        const data = docSnap.data();
+        if (data.type !== type) {
+          return false;
+        }
+        return metadataKeys.every((key) => data?.metadata?.[key] === metadataFilter[key]);
+      });
     } catch (error) {
       console.error('Failed to check recent Alfred notifications:', error);
       return false;
