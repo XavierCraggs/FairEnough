@@ -13,6 +13,7 @@ import houseService, { HouseData } from '@/services/houseService';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEffect, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
+import premiumService from '@/services/premiumService';
 
 const BACKGROUND_COLOR = '#F8FAF9';
 const BUTLER_BLUE = '#4A6572';
@@ -24,6 +25,7 @@ export default function SettingsScreen() {
   const [loading, setLoading] = useState(false);
   const [houseData, setHouseData] = useState<HouseData | null>(null);
   const [houseLoading, setHouseLoading] = useState(true);
+  const [premiumLoading, setPremiumLoading] = useState(false);
 
   useEffect(() => {
     if (!houseId) {
@@ -85,6 +87,64 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleUpgrade = async () => {
+    if (!houseId || !userProfile?.uid) {
+      Alert.alert('Premium', 'Join a house before upgrading.');
+      return;
+    }
+
+    setPremiumLoading(true);
+    try {
+      await premiumService.purchaseHousePass({
+        houseId,
+        userId: userProfile.uid,
+        userName: userProfile.name,
+      });
+      Alert.alert('Premium', 'House Pass activated for your household.');
+    } catch (error: any) {
+      Alert.alert('Premium', error?.message || 'Unable to start subscription.');
+    } finally {
+      setPremiumLoading(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    if (!houseId || !userProfile?.uid) {
+      Alert.alert('Premium', 'Join a house before restoring purchases.');
+      return;
+    }
+
+    setPremiumLoading(true);
+    try {
+      await premiumService.restoreHousePass({
+        houseId,
+        userId: userProfile.uid,
+        userName: userProfile.name,
+      });
+      Alert.alert('Premium', 'Restored House Pass status.');
+    } catch (error: any) {
+      Alert.alert('Premium', error?.message || 'Unable to restore purchases.');
+    } finally {
+      setPremiumLoading(false);
+    }
+  };
+
+  const handleManage = async () => {
+    try {
+      await premiumService.openManageSubscriptions();
+    } catch (error: any) {
+      Alert.alert('Premium', error?.message || 'Unable to open subscription settings.');
+    }
+  };
+
+  const premiumExpiresAt =
+    houseData?.premium?.expiresAt?.toDate?.() ?? null;
+  const premiumStatusLine = houseData?.isPremium
+    ? premiumExpiresAt
+      ? `Renews on ${premiumExpiresAt.toLocaleDateString()}`
+      : 'House Pass is active.'
+    : 'Unlock calendar sync, receipt OCR, and advanced analytics for your house.';
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
@@ -137,12 +197,50 @@ export default function SettingsScreen() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Premium</Text>
-          <Text style={styles.description}>
-            Unlock calendar sync, receipt OCR, and advanced analytics for your house.
-          </Text>
-          <TouchableOpacity style={styles.primaryButton} onPress={() => Alert.alert('Premium')}>
-            <Text style={styles.primaryButtonText}>Upgrade to Premium</Text>
-          </TouchableOpacity>
+          <Text style={styles.description}>{premiumStatusLine}</Text>
+          {houseData?.isPremium ? (
+            <>
+              <TouchableOpacity
+                style={[styles.primaryButton, premiumLoading && styles.buttonDisabled]}
+                onPress={handleManage}
+                disabled={premiumLoading}
+              >
+                <Text style={styles.primaryButtonText}>Manage subscription</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.secondaryButton, premiumLoading && styles.buttonDisabled]}
+                onPress={handleRestore}
+                disabled={premiumLoading}
+              >
+                {premiumLoading ? (
+                  <ActivityIndicator color={BUTLER_BLUE} />
+                ) : (
+                  <Text style={styles.secondaryButtonText}>Restore purchases</Text>
+                )}
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={[styles.primaryButton, premiumLoading && styles.buttonDisabled]}
+                onPress={handleUpgrade}
+                disabled={premiumLoading}
+              >
+                {premiumLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Upgrade to Premium</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.secondaryButton, premiumLoading && styles.buttonDisabled]}
+                onPress={handleRestore}
+                disabled={premiumLoading}
+              >
+                <Text style={styles.secondaryButtonText}>Restore purchases</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
         <TouchableOpacity
@@ -240,6 +338,18 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  secondaryButton: {
+    backgroundColor: '#E5E7EB',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  secondaryButtonText: {
+    color: BUTLER_BLUE,
     fontSize: 15,
     fontWeight: '600',
   },

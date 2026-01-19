@@ -5,6 +5,14 @@ const fetch = require('node-fetch');
 admin.initializeApp();
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
+const HOUSE_PASS_PRODUCT_ID =
+  process.env.REVENUECAT_HOUSE_PASS_PRODUCT_ID ||
+  (functions.config().revenuecat && functions.config().revenuecat.house_pass_product_id) ||
+  'house_pass_monthly';
+
+const getRevenueCatSecret = () =>
+  process.env.REVENUECAT_WEBHOOK_SECRET ||
+  (functions.config().revenuecat && functions.config().revenuecat.webhook_secret);
 
 const chunkArray = (items, size) => {
   const chunks = [];
@@ -80,3 +88,65 @@ exports.sendAlfredPush = functions.firestore
 
     return null;
   });
+
+exports.revenueCatWebhook = functions.https.onRequest(async (req, res) => {
+  if (req.method !== 'POST') {
+    return res.status(405).send('Method not allowed');
+  }
+
+  const secret = getRevenueCatSecret();
+  if (secret) {
+    const authHeader = req.get('Authorization');
+    const allowed =
+      authHeader === secret || authHeader === `Bearer ${secret}`;
+    if (!allowed) {
+      return res.status(401).send('Unauthorized');
+    }
+  }
+
+  const event = (req.body && req.body.event) ? req.body.event : req.body;
+  if (!event || !event.type) {
+    return res.status(400).send('Missing event payload');
+  }
+
+  const productId = event.product_id || event.productId;
+  if (productId && productId !== HOUSE_PASS_PRODUCT_ID) {
+    return res.status(200).send('Ignored product');
+  }
+
+  const attributes = event.subscriber_attributes || {};
+  const houseId =
+    (attributes.houseId && attributes.houseId.value) || event.app_user_id;
+
+  if (!houseId) {
+    return res.status(400).send('Missing houseId');
+  }
+
+  const expirationMs = Number(event.expiration_at_ms || event.expires_at_ms || 0);
+  const expiresAt = expirationMs
+    ? admin.firestore.Timestamp.fromMillis(expirationMs)
+    : null;
+  const isPremium = expirationMs ? expirationMs > Date.now() : true;
+
+  await admin.firestore().doc(`houses/${houseId}`).set(
+    {
+      isPremium,
+      premium: {
+        status: isPremium ? 'active' : 'inactive',
+        expiresAt,
+        productId: productId || HOUSE_PASS_PRODUCT_ID,
+        platform: event.store || null,
+        eventType: event.type,
+        purchaserUid:
+          (attributes.purchaserUid && attributes.purchaserUid.value) || null,
+        purchaserName:
+          (attributes.purchaserName && attributes.purchaserName.value) || null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return res.status(200).send('ok');
+});

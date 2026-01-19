@@ -24,6 +24,13 @@ import financeService, {
 } from '../../services/financeService';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../api/firebase';
+import {
+  impactLight,
+  impactMedium,
+  notifyError,
+  notifySuccess,
+  notifyWarning,
+} from '@/utils/haptics';
 
 const BACKGROUND_COLOR = '#F8FAF9';
 const BUTLER_BLUE = '#4A6572';
@@ -195,6 +202,7 @@ export default function FinanceScreen() {
       new Set([...members.map((member) => member.userId), currentUserId])
     );
     setSplitWithInput(defaultSplit);
+    impactLight();
     setModalVisible(true);
   };
 
@@ -271,8 +279,10 @@ export default function FinanceScreen() {
           finalSplit
         );
       }
+      impactMedium();
       setModalVisible(false);
     } catch (err: any) {
+      notifyError();
       handleError(
         err,
         editingTransaction
@@ -292,7 +302,9 @@ export default function FinanceScreen() {
         transaction.transactionId,
         currentUserId
       );
+      notifySuccess();
     } catch (err: any) {
+      notifyError();
       handleError(err, 'Unable to confirm transaction.');
     }
   };
@@ -308,6 +320,7 @@ export default function FinanceScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            notifyWarning();
             try {
               await financeService.deleteTransaction(
                 houseId,
@@ -315,6 +328,7 @@ export default function FinanceScreen() {
                 currentUserId
               );
             } catch (err: any) {
+              notifyError();
               handleError(err, 'Unable to delete transaction.');
             }
           },

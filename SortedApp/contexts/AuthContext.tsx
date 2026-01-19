@@ -7,6 +7,7 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { auth, db } from '../api/firebase';
 import { UserData } from '../services/authService';
+import premiumService from '../services/premiumService';
 
 /**
  * Auth context value interface
@@ -156,6 +157,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     registerForPushNotifications();
   }, [user]);
+
+  useEffect(() => {
+    const syncRevenueCat = async () => {
+      if (!user || !userProfile) {
+        await premiumService.reset();
+        return;
+      }
+
+      if (!userProfile.houseId) {
+        await premiumService.reset();
+        return;
+      }
+
+      try {
+        await premiumService.syncHouse({
+          houseId: userProfile.houseId,
+          userId: user.uid,
+          userName: userProfile.name,
+        });
+      } catch (error) {
+        console.warn('RevenueCat sync failed:', error);
+      }
+    };
+
+    syncRevenueCat();
+  }, [user, userProfile?.houseId, userProfile?.name, userProfile]);
 
   /**
    * Automatic navigation based on auth state

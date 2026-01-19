@@ -24,6 +24,13 @@ import calendarService, {
   CalendarServiceError,
   RecurrenceFrequency,
 } from '../../services/calendarService';
+import {
+  impactLight,
+  impactMedium,
+  notifyError,
+  notifyWarning,
+  selectionChanged,
+} from '@/utils/haptics';
 
 const BACKGROUND_COLOR = '#F8FAF9';
 const BUTLER_BLUE = '#4A6572';
@@ -159,6 +166,7 @@ export default function CalendarScreen() {
     setEndDateEnabled(false);
     setEndDateInput(null);
     setShowEndDatePicker(false);
+    impactLight();
     setModalVisible(true);
   };
 
@@ -258,8 +266,10 @@ export default function CalendarScreen() {
           }
         );
       }
+      impactMedium();
       setModalVisible(false);
     } catch (err: any) {
+      notifyError();
       handleError(
         err,
         editingEvent
@@ -285,9 +295,11 @@ export default function CalendarScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            notifyWarning();
             try {
               await calendarService.deleteEvent(houseId, event.eventId, currentUserId);
             } catch (err: any) {
+              notifyError();
               handleError(err, 'Unable to delete event.');
             }
           },
@@ -322,6 +334,7 @@ export default function CalendarScreen() {
   };
 
   const handleSelectCalendarDate = (date: Date) => {
+    selectionChanged();
     setSelectedCalendarDate(normalizeDate(date));
   };
 
@@ -814,7 +827,10 @@ export default function CalendarScreen() {
                     styles.toggleButton,
                     viewMode === 'list' && styles.toggleButtonActive,
                   ]}
-                  onPress={() => setViewMode('list')}
+                  onPress={() => {
+                    selectionChanged();
+                    setViewMode('list');
+                  }}
                 >
                   <Text
                     style={[
@@ -830,7 +846,10 @@ export default function CalendarScreen() {
                     styles.toggleButton,
                     viewMode === 'calendar' && styles.toggleButtonActive,
                   ]}
-                  onPress={() => setViewMode('calendar')}
+                  onPress={() => {
+                    selectionChanged();
+                    setViewMode('calendar');
+                  }}
                 >
                   <Text
                     style={[
@@ -873,7 +892,10 @@ export default function CalendarScreen() {
                     styles.toggleButton,
                     viewMode === 'list' && styles.toggleButtonActive,
                   ]}
-                  onPress={() => setViewMode('list')}
+                  onPress={() => {
+                    selectionChanged();
+                    setViewMode('list');
+                  }}
                 >
                   <Text
                     style={[
@@ -889,7 +911,10 @@ export default function CalendarScreen() {
                     styles.toggleButton,
                     viewMode === 'calendar' && styles.toggleButtonActive,
                   ]}
-                  onPress={() => setViewMode('calendar')}
+                  onPress={() => {
+                    selectionChanged();
+                    setViewMode('calendar');
+                  }}
                 >
                   <Text
                     style={[

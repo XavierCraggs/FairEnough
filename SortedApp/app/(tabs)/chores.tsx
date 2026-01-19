@@ -26,6 +26,14 @@ import choreService, {
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../api/firebase';
 import Slider from '@react-native-community/slider';
+import {
+  impactLight,
+  impactMedium,
+  notifyError,
+  notifySuccess,
+  notifyWarning,
+  selectionChanged,
+} from '@/utils/haptics';
 
 const BACKGROUND_COLOR = '#F8FAF9';
 const BUTLER_BLUE = '#4A6572';
@@ -255,6 +263,7 @@ export default function ChoresScreen() {
 
   const openCreateModal = () => {
     resetForm();
+    impactLight();
     setModalVisible(true);
   };
 
@@ -300,11 +309,11 @@ export default function ChoresScreen() {
           {
             title: titleInput.trim(),
             description: descriptionInput.trim(),
-          points,
-          frequency: frequencyInput,
-        },
-        user.uid
-      );
+            points,
+            frequency: frequencyInput,
+          },
+          user.uid
+        );
 
         if (assignedToInput !== editingChore.assignedTo) {
           await choreService.assignChore(
@@ -327,8 +336,10 @@ export default function ChoresScreen() {
       }
 
       resetForm();
+      impactMedium();
       setModalVisible(false);
     } catch (err: any) {
+      notifyError();
       handleError(err, 'Unable to save chore. Please try again.');
     } finally {
       setSubmitting(false);
@@ -360,8 +371,10 @@ export default function ChoresScreen() {
     try {
       await choreService.completeChore(houseId, chore.choreId, user.uid);
       loadFairness();
+      notifySuccess();
       Alert.alert('Nice work!', 'Chore completed. Points added to your total.');
     } catch (err: any) {
+      notifyError();
       handleError(err, 'Unable to complete chore. Please try again.');
     }
   };
@@ -377,9 +390,11 @@ export default function ChoresScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            notifyWarning();
             try {
               await choreService.deleteChore(houseId, chore.choreId, user.uid);
             } catch (err: any) {
+              notifyError();
               handleError(err, 'Unable to delete chore. Please try again.');
             }
           },
@@ -678,7 +693,10 @@ export default function ChoresScreen() {
               styles.filterChip,
               statusFilter === filter.value && styles.filterChipActive,
             ]}
-            onPress={() => setStatusFilter(filter.value)}
+            onPress={() => {
+              selectionChanged();
+              setStatusFilter(filter.value);
+            }}
           >
             <Text
               style={[
@@ -694,7 +712,10 @@ export default function ChoresScreen() {
 
       <TouchableOpacity
         style={styles.sortButton}
-        onPress={() => setSortByPointsDesc((prev) => !prev)}
+        onPress={() => {
+          selectionChanged();
+          setSortByPointsDesc((prev) => !prev);
+        }}
       >
         <Text style={styles.sortButtonText}>
           {sortByPointsDesc ? 'Points high' : 'Points low'}

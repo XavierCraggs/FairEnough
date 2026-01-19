@@ -26,6 +26,16 @@ import {
     members: string[]; // Array of user UIDs
     createdBy: string; // UID of house creator
     isPremium: boolean;
+    premium?: {
+      status?: 'active' | 'inactive';
+      expiresAt?: any;
+      productId?: string;
+      platform?: string;
+      eventType?: string;
+      purchaserUid?: string;
+      purchaserName?: string;
+      updatedAt?: any;
+    };
     choreWeights: Record<string, number>; // { "Scrub Toilet": 10, "Take out bins": 2 }
     createdAt: any;
     updatedAt: any;

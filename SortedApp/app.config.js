@@ -15,6 +15,10 @@ module.exports = {
       firebaseStorageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
       firebaseMessagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
       firebaseAppId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+      revenueCatIosApiKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY,
+      revenueCatAndroidApiKey: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY,
+      revenueCatHousePassSku:
+        process.env.EXPO_PUBLIC_REVENUECAT_HOUSE_PASS_SKU || "house_pass_monthly",
     },
     splash: {
       image: "./assets/images/splash-icon.png",
