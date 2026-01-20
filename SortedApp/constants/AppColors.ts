@@ -24,16 +24,16 @@ export type AppTheme = {
 
 export const appColors: Record<'light' | 'dark', AppTheme> = {
   light: {
-    background: '#F8FAF9',
+    background: '#F4F7FB',
     surface: '#FFFFFF',
     card: '#FFFFFF',
-    panel: '#E5EAF0',
+    panel: '#E7EDF5',
     text: '#1F2937',
     muted: '#6B7280',
-    border: '#E5E7EB',
-    accent: '#4A6572',
-    accentSoft: '#E5EAF0',
-    accentMuted: '#93A4AE',
+    border: '#DDE4EE',
+    accent: '#456371',
+    accentSoft: '#E7EDF5',
+    accentMuted: '#8FA2AE',
     onAccent: '#FFFFFF',
     success: '#16A34A',
     successSoft: '#DCFCE7',

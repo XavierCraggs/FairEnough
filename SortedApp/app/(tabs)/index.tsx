@@ -304,6 +304,20 @@ export default function DashboardScreen() {
     return 'Just now';
   };
 
+  const formatNotificationType = (type: string) => {
+    const labels: Record<string, string> = {
+      CHORE_DUE: 'Chore update',
+      BILL_ADDED: 'Bill added',
+      NUDGE: 'Nudge',
+      MEETING_REQUEST: 'House meeting',
+    };
+    if (labels[type]) return labels[type];
+    return type
+      .replace(/_/g, ' ')
+      .toLowerCase()
+      .replace(/\b\w/g, (match) => match.toUpperCase());
+  };
+
   const getFallbackColor = (userId: string) => {
     const palette = [
       colors.accent,
@@ -616,7 +630,8 @@ export default function DashboardScreen() {
                       {notification.message}
                     </Text>
                     <Text style={styles.notificationMeta}>
-                      {notification.type} - {formatNotificationTime(notification.createdAt)}
+                      {formatNotificationType(notification.type)} -{' '}
+                      {formatNotificationTime(notification.createdAt)}
                     </Text>
                   </RNView>
                 ))
