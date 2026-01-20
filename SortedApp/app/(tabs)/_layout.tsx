@@ -3,8 +3,7 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Tabs } from 'expo-router';
 
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
-
-const BUTLER_BLUE = '#4A6572';
+import { useAppTheme } from '@/hooks/useAppTheme';
 
 // You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
 function TabBarIcon(props: {
@@ -15,22 +14,23 @@ function TabBarIcon(props: {
 }
 
 export default function TabLayout() {
+  const colors = useAppTheme();
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: BUTLER_BLUE,
-        tabBarInactiveTintColor: '#9CA3AF',
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.tabInactive,
         headerShown: useClientOnlyValue(false, true),
         headerStyle: {
-          backgroundColor: '#F8FAF9',
+          backgroundColor: colors.background,
         },
-        headerTintColor: BUTLER_BLUE,
+        headerTintColor: colors.accent,
         headerTitleStyle: {
           fontWeight: '600',
         },
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopColor: '#E5E7EB',
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
         },
       }}>
       <Tabs.Screen

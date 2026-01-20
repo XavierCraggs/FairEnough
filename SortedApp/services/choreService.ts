@@ -18,7 +18,13 @@ import {
     Timestamp,
   } from 'firebase/firestore';
   import { db } from '../api/firebase';
-  import notificationService from './notificationService';
+import notificationService from './notificationService';
+import {
+  adjustAssignmentLoad,
+  buildAssignmentLoad,
+  isPendingStatus,
+  selectFairAssignee,
+} from '../utils/choreAssignment';
 
   export const ROLLING_WINDOW_DAYS = 28;
 
@@ -649,6 +655,7 @@ import {
         const since = addDays(new Date(), -ROLLING_WINDOW_DAYS);
         const pointsMap = await this.getRollingPointsMap(houseId, since);
         const chores = await this.getHouseChores(houseId);
+        const assignmentLoad = buildAssignmentLoad(chores);
         const today = startOfDay(new Date());
 
         const batch = writeBatch(db);
@@ -670,6 +677,7 @@ import {
             ? this.pickFairAssigneeFromList(
                 members,
                 pointsMap,
+                assignmentLoad,
                 chore.lastCompletedBy ?? null
               )
             : chore.assignedTo;
@@ -693,6 +701,31 @@ import {
             });
             updates += 1;
           }
+
+          if (shouldAssign) {
+            const chorePoints = Number.isFinite(chore.points) ? chore.points : 0;
+            const wasCounted =
+              !!chore.assignedTo && isPendingStatus(chore.status);
+            const willCount =
+              !!targetAssignee && isPendingStatus(nextStatus);
+
+            if (wasCounted && (!willCount || targetAssignee !== chore.assignedTo)) {
+              adjustAssignmentLoad(
+                assignmentLoad,
+                chore.assignedTo,
+                -1,
+                -chorePoints
+              );
+            }
+            if (willCount && (!wasCounted || targetAssignee !== chore.assignedTo)) {
+              adjustAssignmentLoad(
+                assignmentLoad,
+                targetAssignee,
+                1,
+                chorePoints
+              );
+            }
+          }
         });
 
         if (updates > 0) {
@@ -713,9 +746,12 @@ import {
 
       const since = addDays(new Date(), -ROLLING_WINDOW_DAYS);
       const pointsMap = await this.getRollingPointsMap(houseId, since);
+      const chores = await this.getHouseChores(houseId);
+      const assignmentLoad = buildAssignmentLoad(chores);
       const target = this.pickFairAssigneeFromList(
         members,
         pointsMap,
+        assignmentLoad,
         options?.excludeUserId ?? null
       );
       if (!target) return;
@@ -852,21 +888,10 @@ import {
     private pickFairAssigneeFromList(
       members: string[],
       pointsMap: Map<string, number>,
+      assignmentLoad: Map<string, { count: number; points: number }>,
       excludeUserId: string | null
     ): string | null {
-      const available = members.filter((memberId) => memberId !== excludeUserId);
-      const pool = available.length ? available : members;
-      if (!pool.length) {
-        return null;
-      }
-      return [...pool].sort((a, b) => {
-        const pointsA = pointsMap.get(a) ?? 0;
-        const pointsB = pointsMap.get(b) ?? 0;
-        if (pointsA !== pointsB) {
-          return pointsA - pointsB;
-        }
-        return a.localeCompare(b);
-      })[0];
+      return selectFairAssignee(members, pointsMap, assignmentLoad, excludeUserId);
     }
 
     private async pickFairAssignee(
@@ -877,7 +902,14 @@ import {
       if (!members.length) return null;
       const since = addDays(new Date(), -ROLLING_WINDOW_DAYS);
       const pointsMap = await this.getRollingPointsMap(houseId, since);
-      return this.pickFairAssigneeFromList(members, pointsMap, excludeUserId);
+      const chores = await this.getHouseChores(houseId);
+      const assignmentLoad = buildAssignmentLoad(chores);
+      return this.pickFairAssigneeFromList(
+        members,
+        pointsMap,
+        assignmentLoad,
+        excludeUserId
+      );
     }
   
     /**

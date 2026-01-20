@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   StyleSheet,
   TextInput,
@@ -11,11 +11,12 @@ import {
 import { Text, View } from '@/components/Themed';
 import { router } from 'expo-router';
 import authService, { AuthServiceError } from '@/services/authService';
-
-const BACKGROUND_COLOR = '#F8FAF9';
-const BUTLER_BLUE = '#4A6572';
+import { useAppTheme } from '@/hooks/useAppTheme';
+import { AppTheme } from '@/constants/AppColors';
 
 export default function LoginScreen() {
+  const colors = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -62,7 +63,7 @@ export default function LoginScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.content} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+      <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
         <Text style={styles.title}>Welcome Back</Text>
         <Text style={styles.subtitle}>Sign in to continue</Text>
 
@@ -70,7 +71,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="Email"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.muted}
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
@@ -82,7 +83,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="Password"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.muted}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -99,7 +100,7 @@ export default function LoginScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color={colors.onAccent} />
             ) : (
               <Text style={styles.buttonText}>Sign In</Text>
             )}
@@ -125,7 +126,8 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppTheme) =>
+  StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -135,17 +137,18 @@ const styles = StyleSheet.create({
     paddingTop: 80,
     paddingBottom: 40,
     justifyContent: 'center',
+    backgroundColor: colors.background,
   },
   title: {
     fontSize: 32,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
-    color: '#6B7280',
+    color: colors.muted,
     marginBottom: 48,
     textAlign: 'center',
   },
@@ -153,24 +156,24 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   input: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,
-    color: '#1F2937',
+    color: colors.text,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
   },
   errorText: {
-    color: '#EF4444',
+    color: colors.danger,
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
   },
   button: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
@@ -181,7 +184,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   buttonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 16,
     fontWeight: '600',
   },
@@ -190,7 +193,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   forgotText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontSize: 14,
   },
   footer: {
@@ -199,14 +202,14 @@ const styles = StyleSheet.create({
     marginTop: 32,
   },
   footerText: {
-    color: '#6B7280',
+    color: colors.muted,
     fontSize: 14,
   },
   linkText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontSize: 14,
     fontWeight: '600',
   },
-});
+  });
 
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   StyleSheet,
   TextInput,
@@ -14,12 +14,13 @@ import { Text, View } from '@/components/Themed';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useAuth } from '@/contexts/AuthContext';
 import houseService, { HouseServiceError, HouseServiceErrorCode } from '@/services/houseService';
-
-const BACKGROUND_COLOR = '#F8FAF9';
-const BUTLER_BLUE = '#4A6572';
+import { useAppTheme } from '@/hooks/useAppTheme';
+import { AppTheme } from '@/constants/AppColors';
 
 export default function HouseSetupScreen() {
   const { user, userProfile } = useAuth();
+  const colors = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [joinModalVisible, setJoinModalVisible] = useState(false);
   const [houseName, setHouseName] = useState('');
@@ -110,7 +111,7 @@ export default function HouseSetupScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.content} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+        <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
           <Text style={styles.title}>Welcome to Sorted</Text>
           <Text style={styles.subtitle}>Let's get your house organized</Text>
 
@@ -120,7 +121,7 @@ export default function HouseSetupScreen() {
               onPress={() => setCreateModalVisible(true)}
               disabled={loading}
             >
-              <FontAwesome name="home" size={24} color="#FFFFFF" style={styles.buttonIcon} />
+              <FontAwesome name="home" size={24} color={colors.surface} style={styles.buttonIcon} />
               <Text style={styles.primaryButtonText}>Start a New House</Text>
             </TouchableOpacity>
 
@@ -129,7 +130,7 @@ export default function HouseSetupScreen() {
               onPress={() => setJoinModalVisible(true)}
               disabled={loading}
             >
-              <FontAwesome name="key" size={24} color={BUTLER_BLUE} style={styles.buttonIcon} />
+              <FontAwesome name="key" size={24} color={colors.accent} style={styles.buttonIcon} />
               <Text style={styles.secondaryButtonText}>I have an Invite Code</Text>
             </TouchableOpacity>
           </View>
@@ -138,7 +139,7 @@ export default function HouseSetupScreen() {
             <View style={styles.alfredBubble}>
               <Text style={styles.alfredText}>Alfred is ready to organize your new home.</Text>
             </View>
-            <FontAwesome name="user" size={20} color={BUTLER_BLUE} style={styles.alfredIcon} />
+            <FontAwesome name="user" size={20} color={colors.accent} style={styles.alfredIcon} />
           </View>
         </View>
       </ScrollView>
@@ -159,14 +160,14 @@ export default function HouseSetupScreen() {
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={styles.modalContent}
           >
-            <View style={styles.modalCard} lightColor="#FFFFFF" darkColor="#FFFFFF">
+            <View style={styles.modalCard} lightColor={colors.card} darkColor={colors.card}>
               <Text style={styles.modalTitle}>Create New House</Text>
               <Text style={styles.modalSubtitle}>Give your house a name</Text>
 
               <TextInput
                 style={styles.modalInput}
                 placeholder="House Name"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors.muted}
                 value={houseName}
                 onChangeText={(text) => {
                   setHouseName(text);
@@ -198,7 +199,7 @@ export default function HouseSetupScreen() {
                   disabled={loading}
                 >
                   {loading ? (
-                    <ActivityIndicator color="#FFFFFF" />
+                    <ActivityIndicator color={colors.onAccent} />
                   ) : (
                     <Text style={styles.modalConfirmText}>Create</Text>
                   )}
@@ -225,14 +226,14 @@ export default function HouseSetupScreen() {
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={styles.modalContent}
           >
-            <View style={styles.modalCard} lightColor="#FFFFFF" darkColor="#FFFFFF">
+            <View style={styles.modalCard} lightColor={colors.card} darkColor={colors.card}>
               <Text style={styles.modalTitle}>Join House</Text>
               <Text style={styles.modalSubtitle}>Enter your 6-character invite code</Text>
 
               <TextInput
                 style={[styles.modalInput, styles.inviteCodeInput]}
                 placeholder="ABC123"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors.muted}
                 value={inviteCode}
                 onChangeText={handleInviteCodeChange}
                 autoCapitalize="characters"
@@ -262,7 +263,7 @@ export default function HouseSetupScreen() {
                   disabled={loading || inviteCode.length !== 6}
                 >
                   {loading ? (
-                    <ActivityIndicator color="#FFFFFF" />
+                    <ActivityIndicator color={colors.onAccent} />
                   ) : (
                     <Text style={styles.modalConfirmText}>Join</Text>
                   )}
@@ -276,7 +277,8 @@ export default function HouseSetupScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppTheme) =>
+  StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -289,17 +291,18 @@ const styles = StyleSheet.create({
     paddingTop: 80,
     paddingBottom: 40,
     justifyContent: 'center',
+    backgroundColor: colors.background,
   },
   title: {
     fontSize: 32,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
-    color: '#6B7280',
+    color: colors.muted,
     marginBottom: 48,
     textAlign: 'center',
   },
@@ -308,7 +311,7 @@ const styles = StyleSheet.create({
     marginBottom: 48,
   },
   primaryButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     borderRadius: 16,
     paddingVertical: 20,
     paddingHorizontal: 24,
@@ -322,7 +325,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   secondaryButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     paddingVertical: 20,
     paddingHorizontal: 24,
@@ -330,7 +333,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: BUTLER_BLUE,
+    borderColor: colors.accent,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -341,12 +344,12 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 18,
     fontWeight: '600',
   },
   secondaryButtonText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontSize: 18,
     fontWeight: '600',
   },
@@ -360,18 +363,18 @@ const styles = StyleSheet.create({
     marginTop: 32,
   },
   alfredBubble: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 20,
     paddingHorizontal: 20,
     paddingVertical: 12,
     marginRight: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     maxWidth: '75%',
   },
   alfredText: {
     fontSize: 14,
-    color: '#6B7280',
+    color: colors.muted,
     fontStyle: 'italic',
     textAlign: 'center',
   },
@@ -381,7 +384,7 @@ const styles = StyleSheet.create({
   // Modal styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   modalContent: {
@@ -389,7 +392,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 24,
@@ -403,26 +406,26 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 24,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
     textAlign: 'center',
   },
   modalSubtitle: {
     fontSize: 14,
-    color: '#6B7280',
+    color: colors.muted,
     marginBottom: 24,
     textAlign: 'center',
   },
   modalInput: {
-    backgroundColor: '#F8FAF9',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,
-    color: '#1F2937',
+    color: colors.text,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
   },
   inviteCodeInput: {
     textAlign: 'center',
@@ -432,7 +435,7 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
   modalErrorText: {
-    color: '#EF4444',
+    color: colors.danger,
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
@@ -450,20 +453,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   modalCancelButton: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.accentSoft,
   },
   modalConfirmButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   modalCancelText: {
-    color: '#6B7280',
+    color: colors.muted,
     fontSize: 16,
     fontWeight: '600',
   },
   modalConfirmText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 16,
     fontWeight: '600',
   },
-});
+  });
 

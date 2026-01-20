@@ -12,6 +12,8 @@ import {
   TextInput,
   TouchableWithoutFeedback,
   View as RNView,
+  Pressable,
+  Image,
 } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/contexts/AuthContext';
@@ -23,15 +25,14 @@ import useAlfred from '@/hooks/useAlfred';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/api/firebase';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-
-const BACKGROUND_COLOR = '#F8FAF9';
-const BUTLER_BLUE = '#4A6572';
-const MUTED_TEXT = '#6B7280';
+import { useAppTheme } from '@/hooks/useAppTheme';
+import { AppTheme } from '@/constants/AppColors';
 
 interface Member {
   userId: string;
   name: string;
   totalPoints: number;
+  photoUrl?: string | null;
 }
 
 interface FairnessData {
@@ -47,6 +48,8 @@ interface FairnessData {
 
 export default function DashboardScreen() {
   const { userProfile, user } = useAuth();
+  const colors = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const userName = userProfile?.name || 'User';
   const houseId = userProfile?.houseId;
   const currentUserId = user?.uid;
@@ -124,6 +127,7 @@ export default function DashboardScreen() {
             userId: doc.id,
             name: data.name || 'Unknown',
             totalPoints: data.totalPoints || 0,
+            photoUrl: data.photoUrl || data.photoURL || null,
           };
         });
         setMembers(membersList);
@@ -256,6 +260,14 @@ export default function DashboardScreen() {
     return [...fairnessData.memberStats].sort((a, b) => b.totalPoints - a.totalPoints);
   }, [fairnessData]);
 
+  const memberPhotoMap = useMemo(() => {
+    const map = new Map<string, string | null>();
+    members.forEach((member) => {
+      map.set(member.userId, member.photoUrl ?? null);
+    });
+    return map;
+  }, [members]);
+
   const currentUserStat = useMemo(() => {
     if (!fairnessData || !currentUserId) return null;
     return fairnessData.memberStats.find((stat) => stat.userId === currentUserId) || null;
@@ -292,6 +304,22 @@ export default function DashboardScreen() {
     return 'Just now';
   };
 
+  const getFallbackColor = (userId: string) => {
+    const palette = [
+      colors.accent,
+      colors.accentMuted,
+      colors.success,
+      colors.warning,
+    ];
+    let hash = 0;
+    for (let i = 0; i < userId.length; i += 1) {
+      hash = (hash * 31 + userId.charCodeAt(i)) % palette.length;
+    }
+    return palette[hash];
+  };
+
+  const getInitial = (name: string) => (name.trim() ? name.trim()[0].toUpperCase() : '?');
+
   const currentUserDeviation = currentUserStat?.deviation ?? null;
   const unreadCount = unreadNotifications.length;
   const latestNotificationTime = latestNotification
@@ -314,7 +342,7 @@ export default function DashboardScreen() {
   if (!houseId) {
     return (
       <ScrollView style={styles.container}>
-        <View style={styles.content} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+        <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
           <Text style={styles.greeting}>Welcome back, {userName}!</Text>
 
           <View style={styles.section}>
@@ -335,9 +363,9 @@ export default function DashboardScreen() {
   }
 
   return (
-    <View style={styles.container} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+    <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
       <ScrollView>
-        <View style={styles.content} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+        <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
         <Text style={styles.greeting}>Welcome back, {userName}!</Text>
 
         {/* Alfred Briefing */}
@@ -345,7 +373,7 @@ export default function DashboardScreen() {
             <RNView style={styles.alfredHeader}>
               <RNView style={styles.alfredTitleRow}>
                 <RNView style={styles.alfredIcon}>
-                <FontAwesome name="user" size={18} color={BUTLER_BLUE} />
+                <FontAwesome name="user" size={18} color={colors.accent} />
                 </RNView>
                 <Text style={styles.alfredTitle}>Alfred Briefing</Text>
                 {unreadCount > 0 && (
@@ -377,7 +405,7 @@ export default function DashboardScreen() {
         {/* House Snapshot */}
         {loadingHouse ? (
           <View style={styles.section}>
-            <ActivityIndicator size="small" color={BUTLER_BLUE} />
+            <ActivityIndicator size="small" color={colors.accent} />
           </View>
         ) : houseData ? (
           <View style={styles.section}>
@@ -398,7 +426,7 @@ export default function DashboardScreen() {
         {loadingFairness ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>House Fairness</Text>
-            <ActivityIndicator size="small" color={BUTLER_BLUE} />
+            <ActivityIndicator size="small" color={colors.accent} />
           </View>
         ) : fairnessData ? (
           <View style={styles.section}>
@@ -430,11 +458,37 @@ export default function DashboardScreen() {
                       : member.deviation >= 0
                       ? styles.fairnessDotPositive
                       : styles.fairnessDotNegative;
+                    const photoUrl = memberPhotoMap.get(member.userId) ?? null;
+                    const fallbackColor = getFallbackColor(member.userId);
                     return (
-                      <RNView
+                      <Pressable
                         key={member.userId}
                         style={[styles.fairnessDot, dotStyle, { left: `${position}%` }]}
-                      />
+                        onPress={() => {
+                          const deviationText = `${member.deviation >= 0 ? '+' : ''}${Math.round(
+                            member.deviation
+                          )} vs avg`;
+                          Alert.alert(
+                            member.userName,
+                            `${member.totalPoints} pts • ${deviationText}`
+                          );
+                        }}
+                      >
+                        {photoUrl ? (
+                          <Image source={{ uri: photoUrl }} style={styles.fairnessAvatar} />
+                        ) : (
+                          <RNView
+                            style={[
+                              styles.fairnessAvatar,
+                              { backgroundColor: fallbackColor },
+                            ]}
+                          >
+                            <Text style={styles.fairnessAvatarText}>
+                              {getInitial(member.userName)}
+                            </Text>
+                          </RNView>
+                        )}
+                      </Pressable>
                     );
                   })}
                 </RNView>
@@ -483,7 +537,7 @@ export default function DashboardScreen() {
         {loadingChores ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Chores Snapshot</Text>
-            <ActivityIndicator size="small" color={BUTLER_BLUE} />
+            <ActivityIndicator size="small" color={colors.accent} />
           </View>
         ) : (
           <View style={styles.section}>
@@ -595,7 +649,7 @@ export default function DashboardScreen() {
             <TextInput
               style={styles.modalInput}
               placeholder="e.g., the dishes tonight"
-              placeholderTextColor={MUTED_TEXT}
+              placeholderTextColor={colors.muted}
               value={nudgeInput}
               onChangeText={setNudgeInput}
             />
@@ -616,7 +670,7 @@ export default function DashboardScreen() {
                 disabled={nudgeSubmitting}
               >
                 {nudgeSubmitting ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color={colors.onAccent} />
                 ) : (
                   <Text style={styles.modalActionButtonText}>Send nudge</Text>
                 )}
@@ -630,7 +684,7 @@ export default function DashboardScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppTheme) => StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -641,16 +695,16 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: 28,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 32,
   },
   alfredCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
   },
   alfredHeader: {
     flexDirection: 'row',
@@ -663,14 +717,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   alfredBadge: {
-    backgroundColor: '#E11D48',
+    backgroundColor: colors.danger,
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 2,
     marginLeft: 8,
   },
   alfredBadgeText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 11,
     fontWeight: '700',
   },
@@ -678,7 +732,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#E5EAF0',
+    backgroundColor: colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
@@ -686,21 +740,21 @@ const styles = StyleSheet.create({
   alfredTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
   },
   alfredLink: {
     fontSize: 13,
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '600',
   },
   alfredMessage: {
     fontSize: 14,
-    color: MUTED_TEXT,
+    color: colors.muted,
     lineHeight: 20,
   },
   alfredMeta: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginTop: 6,
   },
   alfredActionsRow: {
@@ -708,106 +762,123 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   alfredButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 999,
   },
   alfredButtonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 12,
     fontWeight: '600',
   },
   section: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 12,
     padding: 20,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 12,
   },
   sectionSubtitle: {
     fontSize: 14,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 12,
   },
   description: {
     fontSize: 16,
-    color: MUTED_TEXT,
+    color: colors.muted,
     lineHeight: 24,
     marginBottom: 16,
   },
   houseName: {
     fontSize: 24,
     fontWeight: '700',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 16,
   },
   memberCount: {
     fontSize: 16,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   secondaryButton: {
     marginTop: 12,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
     alignItems: 'center',
   },
   secondaryButtonText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontSize: 14,
     fontWeight: '600',
   },
   fairnessSummary: {
     fontSize: 15,
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 14,
     fontWeight: '600',
   },
   fairnessScale: {
     position: 'relative',
-    height: 32,
+    height: 36,
     justifyContent: 'center',
     marginBottom: 8,
   },
   fairnessTrack: {
     height: 6,
     borderRadius: 999,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.border,
   },
   fairnessAverageMarker: {
     position: 'absolute',
     width: 2,
     height: 24,
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     top: 4,
   },
   fairnessDot: {
     position: 'absolute',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    top: 10,
-    transform: [{ translateX: -6 }],
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    top: 6,
+    transform: [{ translateX: -12 }],
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   fairnessDotCurrent: {
-    backgroundColor: BUTLER_BLUE,
     borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderColor: colors.accent,
   },
   fairnessDotPositive: {
-    backgroundColor: '#16A34A',
+    borderWidth: 2,
+    borderColor: colors.success,
   },
   fairnessDotNegative: {
-    backgroundColor: '#DC2626',
+    borderWidth: 2,
+    borderColor: colors.danger,
+  },
+  fairnessAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentSoft,
+  },
+  fairnessAvatarText: {
+    color: colors.onAccent,
+    fontSize: 10,
+    fontWeight: '700',
   },
   fairnessLegend: {
     flexDirection: 'row',
@@ -816,11 +887,11 @@ const styles = StyleSheet.create({
   },
   fairnessLegendText: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   fairnessList: {
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     paddingTop: 8,
   },
   fairnessRow: {
@@ -833,7 +904,7 @@ const styles = StyleSheet.create({
   },
   fairnessMemberName: {
     fontSize: 15,
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '500',
   },
   fairnessMeta: {
@@ -842,7 +913,7 @@ const styles = StyleSheet.create({
   },
   fairnessPoints: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginRight: 8,
   },
   fairnessDeltaBadge: {
@@ -851,15 +922,15 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   fairnessDeltaPositive: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: colors.successSoft,
   },
   fairnessDeltaNegative: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerSoft,
   },
   fairnessDeltaText: {
     fontSize: 11,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
   },
   statsRow: {
     flexDirection: 'row',
@@ -869,17 +940,17 @@ const styles = StyleSheet.create({
   },
   statCard: {
     width: '48%',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 12,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
   },
   statValue: {
     fontSize: 20,
     fontWeight: '700',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 4,
   },
   statValueDanger: {
@@ -887,10 +958,10 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   primaryButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     paddingVertical: 14,
     paddingHorizontal: 24,
     borderRadius: 8,
@@ -898,12 +969,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 16,
     fontWeight: '600',
   },
   actionButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     paddingVertical: 14,
     paddingHorizontal: 24,
     borderRadius: 8,
@@ -911,7 +982,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   actionButtonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 16,
     fontWeight: '600',
   },
@@ -920,11 +991,11 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
@@ -940,21 +1011,21 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
   },
   modalCloseText: {
     fontSize: 14,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   modalPrimaryButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
     marginBottom: 16,
   },
   modalPrimaryButtonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontWeight: '600',
     fontSize: 14,
   },
@@ -964,31 +1035,31 @@ const styles = StyleSheet.create({
   notificationRow: {
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
   },
   notificationMessage: {
     fontSize: 14,
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 4,
   },
   notificationMeta: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   modalLabel: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 8,
   },
   modalInput: {
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: BUTLER_BLUE,
-    backgroundColor: '#FFFFFF',
+    color: colors.accent,
+    backgroundColor: colors.card,
   },
   modalActionsRow: {
     flexDirection: 'row',
@@ -1007,12 +1078,13 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   modalActionConfirm: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     marginLeft: 12,
   },
   modalActionButtonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 14,
     fontWeight: '600',
   },
 });
+

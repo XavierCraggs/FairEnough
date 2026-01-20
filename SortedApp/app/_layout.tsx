@@ -9,6 +9,7 @@ import * as Notifications from 'expo-notifications';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { ThemePreferenceProvider } from '@/contexts/ThemeContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -52,7 +53,11 @@ export default function RootLayout() {
     return null;
   }
 
-  return <RootLayoutNav />;
+  return (
+    <ThemePreferenceProvider>
+      <RootLayoutNav />
+    </ThemePreferenceProvider>
+  );
 }
 
 function RootLayoutNav() {

@@ -34,11 +34,9 @@ import {
   notifyWarning,
   selectionChanged,
 } from '@/utils/haptics';
+import { useAppTheme } from '@/hooks/useAppTheme';
+import { AppTheme } from '@/constants/AppColors';
 
-const BACKGROUND_COLOR = '#F8FAF9';
-const BUTLER_BLUE = '#4A6572';
-const CARD_BACKGROUND = '#FFFFFF';
-const MUTED_TEXT = '#6B7280';
 const GREEN_ACCENT = '#16A34A';
 const BORDER_RADIUS = 16;
 
@@ -111,6 +109,8 @@ const getDueLabel = (dueDate: Date | null) => {
 
 export default function ChoresScreen() {
   const { user, userProfile } = useAuth();
+  const colors = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const houseId = userProfile?.houseId ?? null;
 
   const [chores, setChores] = useState<ChoreData[]>([]);
@@ -467,8 +467,8 @@ export default function ChoresScreen() {
     const dueLabel = getDueLabel(dueDate);
 
     let label = chore.status === 'completed' ? 'Completed' : 'Pending';
-    let backgroundColor = '#E5E7EB';
-    let color = BUTLER_BLUE;
+    let backgroundColor = colors.accentSoft;
+    let color = colors.accent;
 
     if (chore.status === 'completed') {
       backgroundColor = '#DCFCE7';
@@ -622,7 +622,7 @@ export default function ChoresScreen() {
       return (
         <RNView style={styles.fairnessContainer}>
           <Text style={styles.sectionTitle}>House Fairness</Text>
-          <ActivityIndicator color={BUTLER_BLUE} />
+          <ActivityIndicator color={colors.accent} />
         </RNView>
       );
     }
@@ -671,7 +671,7 @@ export default function ChoresScreen() {
                     styles.fairnessBarFill,
                     {
                       width: `${widthPercent}%`,
-                      backgroundColor: isCurrentUser ? GREEN_ACCENT : BUTLER_BLUE,
+                      backgroundColor: isCurrentUser ? GREEN_ACCENT : colors.accent,
                     },
                   ]}
                 />
@@ -767,7 +767,7 @@ export default function ChoresScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="Fold laundry"
-                  placeholderTextColor={MUTED_TEXT}
+                  placeholderTextColor={colors.muted}
                   value={titleInput}
                   onChangeText={setTitleInput}
                 />
@@ -776,7 +776,7 @@ export default function ChoresScreen() {
                 <TextInput
                   style={[styles.input, styles.inputMultiline]}
                   placeholder="Include any helpful details"
-                  placeholderTextColor={MUTED_TEXT}
+                  placeholderTextColor={colors.muted}
                   multiline
                   value={descriptionInput}
                   onChangeText={setDescriptionInput}
@@ -821,9 +821,9 @@ export default function ChoresScreen() {
                     minimumValue={1}
                     maximumValue={10}
                     step={1}
-                    minimumTrackTintColor={BUTLER_BLUE}
-                    maximumTrackTintColor="#E5E7EB"
-                    thumbTintColor={BUTLER_BLUE}
+                    minimumTrackTintColor={colors.accent}
+                    maximumTrackTintColor={colors.border}
+                    thumbTintColor={colors.accent}
                     value={pointsInput}
                     onValueChange={setPointsInput}
                   />
@@ -925,7 +925,7 @@ export default function ChoresScreen() {
                   disabled={submitting}
                 >
                   {submitting ? (
-                    <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color={colors.onAccent} />
                   ) : (
                     <Text style={styles.modalPrimaryText}>
                       {editingChore ? 'Save changes' : 'Add chore'}
@@ -943,7 +943,7 @@ export default function ChoresScreen() {
 
   if (!isInHouse) {
     return (
-      <View style={styles.container} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+      <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
         <RNView style={styles.centeredMessage}>
           <Text style={styles.title}>Join or create a house</Text>
           <Text style={styles.description}>
@@ -956,7 +956,7 @@ export default function ChoresScreen() {
   }
 
   return (
-    <View style={styles.container} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+    <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
       <FlatList
         data={filteredAndSortedChores}
         keyExtractor={(item) => item.choreId}
@@ -974,7 +974,7 @@ export default function ChoresScreen() {
         renderItem={renderChoreCard}
         ListEmptyComponent={renderEmptyState}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BUTLER_BLUE} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
         }
       />
 
@@ -986,14 +986,14 @@ export default function ChoresScreen() {
 
       {loading && (
         <RNView style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color={BUTLER_BLUE} />
+          <ActivityIndicator size="large" color={colors.accent} />
         </RNView>
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppTheme) => StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -1004,12 +1004,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
   },
   description: {
     fontSize: 15,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 20,
   },
   centeredMessage: {
@@ -1019,7 +1019,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   choreCard: {
-    backgroundColor: CARD_BACKGROUND,
+    backgroundColor: colors.card,
     borderRadius: BORDER_RADIUS,
     padding: 16,
     marginBottom: 12,
@@ -1041,12 +1041,12 @@ const styles = StyleSheet.create({
   choreTitle: {
     fontSize: 17,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 4,
   },
   choreDescription: {
     fontSize: 14,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   choreMetaRow: {
     flexDirection: 'row',
@@ -1056,21 +1056,21 @@ const styles = StyleSheet.create({
   },
   choreMetaText: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   choreMetaDivider: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginHorizontal: 6,
   },
   lastCompletedText: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginTop: 4,
   },
   choreDueText: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginTop: 4,
   },
   statusBadge: {
@@ -1092,7 +1092,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   completeButtonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontWeight: '600',
     fontSize: 15,
   },
@@ -1102,12 +1102,12 @@ const styles = StyleSheet.create({
   },
   menuButtonText: {
     fontSize: 16,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   menuContainer: {
     marginTop: 8,
     borderRadius: 12,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.surface,
     overflow: 'hidden',
   },
   menuItem: {
@@ -1116,7 +1116,7 @@ const styles = StyleSheet.create({
   },
   menuItemText: {
     fontSize: 14,
-    color: BUTLER_BLUE,
+    color: colors.accent,
   },
   emptyStateContainer: {
     alignItems: 'center',
@@ -1126,12 +1126,12 @@ const styles = StyleSheet.create({
   emptyStateTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
   },
   emptyStateSubtitle: {
     fontSize: 14,
-    color: MUTED_TEXT,
+    color: colors.muted,
     textAlign: 'center',
     paddingHorizontal: 16,
   },
@@ -1142,7 +1142,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 999,
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -1152,7 +1152,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   fabText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 30,
     lineHeight: 32,
   },
@@ -1162,20 +1162,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   fairnessContainer: {
-    backgroundColor: '#E5EAF0',
+    backgroundColor: colors.panel,
     borderRadius: BORDER_RADIUS,
     padding: 12,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 4,
   },
   fairnessSubtitle: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 8,
   },
   fairnessRow: {
@@ -1188,20 +1190,20 @@ const styles = StyleSheet.create({
   },
   fairnessMemberName: {
     fontSize: 13,
-    color: BUTLER_BLUE,
+    color: colors.accent,
   },
   fairnessCurrentUserName: {
     fontWeight: '700',
   },
   fairnessPointsText: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   fairnessBarTrack: {
     flex: 1,
     height: 8,
     borderRadius: 999,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     overflow: 'hidden',
   },
   fairnessBarFill: {
@@ -1221,38 +1223,38 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     marginRight: 8,
   },
   filterChipActive: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   filterChipText: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   filterChipTextActive: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontWeight: '600',
   },
   sortButton: {
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
   },
   sortButtonText: {
     fontSize: 13,
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '500',
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: CARD_BACKGROUND,
+    backgroundColor: colors.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
@@ -1264,18 +1266,18 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 16,
   },
   modalLabel: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 4,
     marginTop: 8,
   },
   helperText: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 6,
   },
   sliderRow: {
@@ -1287,7 +1289,7 @@ const styles = StyleSheet.create({
     width: 32,
     fontSize: 16,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     textAlign: 'center',
     marginRight: 8,
   },
@@ -1303,43 +1305,43 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     marginRight: 6,
   },
   stepDotActive: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   stepDotComplete: {
     backgroundColor: '#93C5FD',
   },
   reviewCard: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     marginTop: 12,
   },
   reviewTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
   },
   reviewItem: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 4,
   },
   input: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: BUTLER_BLUE,
-    backgroundColor: '#FFFFFF',
+    color: colors.accent,
+    backgroundColor: colors.card,
   },
   inputMultiline: {
     height: 72,
@@ -1361,19 +1363,19 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     marginRight: 8,
     marginBottom: 6,
   },
   dropdownChipActive: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   dropdownChipText: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   dropdownChipTextActive: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontWeight: '600',
   },
   modalActionsRow: {
@@ -1388,24 +1390,26 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   modalCancelButton: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
   },
   modalSecondaryButton: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
   },
   modalPrimaryButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   modalCancelText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '500',
   },
   modalSecondaryText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '600',
   },
   modalPrimaryText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontWeight: '600',
   },
 });
+
+

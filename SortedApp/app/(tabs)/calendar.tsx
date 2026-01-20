@@ -31,11 +31,9 @@ import {
   notifyWarning,
   selectionChanged,
 } from '@/utils/haptics';
+import { useAppTheme } from '@/hooks/useAppTheme';
+import { AppTheme } from '@/constants/AppColors';
 
-const BACKGROUND_COLOR = '#F8FAF9';
-const BUTLER_BLUE = '#4A6572';
-const CARD_BACKGROUND = '#FFFFFF';
-const MUTED_TEXT = '#6B7280';
 const GREEN_ACCENT = '#16A34A';
 const BORDER_RADIUS = 16;
 const UPCOMING_DAYS = 60;
@@ -93,6 +91,8 @@ const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function CalendarScreen() {
   const { user, userProfile } = useAuth();
+  const colors = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const houseId = userProfile?.houseId ?? null;
   const currentUserId = user?.uid ?? null;
 
@@ -617,7 +617,7 @@ export default function CalendarScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Rent due"
-                placeholderTextColor={MUTED_TEXT}
+                placeholderTextColor={colors.muted}
                 value={titleInput}
                 onChangeText={setTitleInput}
                 onFocus={() => {
@@ -630,7 +630,7 @@ export default function CalendarScreen() {
               <TextInput
                 style={[styles.input, styles.inputMultiline]}
                 placeholder="Any details or reminders"
-                placeholderTextColor={MUTED_TEXT}
+                placeholderTextColor={colors.muted}
                 value={descriptionInput}
                 onChangeText={setDescriptionInput}
                 onFocus={() => {
@@ -657,7 +657,7 @@ export default function CalendarScreen() {
                     mode="date"
                     display={Platform.OS === 'ios' ? 'inline' : 'default'}
                     themeVariant={Platform.OS === 'ios' ? 'light' : undefined}
-                    textColor={Platform.OS === 'ios' ? BUTLER_BLUE : undefined}
+                    textColor={Platform.OS === 'ios' ? colors.accent : undefined}
                     onChange={handleDateChange}
                   />
                 </RNView>
@@ -755,7 +755,7 @@ export default function CalendarScreen() {
                             mode="date"
                             display={Platform.OS === 'ios' ? 'inline' : 'default'}
                             themeVariant={Platform.OS === 'ios' ? 'light' : undefined}
-                            textColor={Platform.OS === 'ios' ? BUTLER_BLUE : undefined}
+                            textColor={Platform.OS === 'ios' ? colors.accent : undefined}
                             onChange={handleEndDateChange}
                           />
                         </RNView>
@@ -779,7 +779,7 @@ export default function CalendarScreen() {
                   disabled={submitting}
                 >
                   {submitting ? (
-                    <ActivityIndicator color="#FFFFFF" />
+                    <ActivityIndicator color={colors.onAccent} />
                   ) : (
                     <Text style={styles.modalPrimaryText}>
                       {editingEvent ? 'Save changes' : 'Add event'}
@@ -796,7 +796,7 @@ export default function CalendarScreen() {
 
   if (!isInHouse) {
     return (
-      <View style={styles.container} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+      <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
         <RNView style={styles.centeredMessage}>
           <Text style={styles.title}>Join or create a house</Text>
           <Text style={styles.description}>
@@ -809,7 +809,7 @@ export default function CalendarScreen() {
   }
 
   return (
-    <View style={styles.container} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+    <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
       {viewMode === 'list' ? (
         <FlatList
           data={eventOccurrences}
@@ -872,7 +872,7 @@ export default function CalendarScreen() {
           renderItem={renderOccurrenceCard}
           ListEmptyComponent={renderEmptyState}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BUTLER_BLUE} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
           }
         />
       ) : (
@@ -944,7 +944,7 @@ export default function CalendarScreen() {
           renderItem={renderOccurrenceCard}
           ListEmptyComponent={renderSelectedDateEmptyState}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BUTLER_BLUE} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
           }
         />
       )}
@@ -957,14 +957,14 @@ export default function CalendarScreen() {
 
       {loading && (
         <RNView style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color={BUTLER_BLUE} />
+          <ActivityIndicator size="large" color={colors.accent} />
         </RNView>
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppTheme) => StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -975,17 +975,17 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
   },
   description: {
     fontSize: 15,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 20,
   },
   toggleRow: {
     flexDirection: 'row',
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     borderRadius: 999,
     padding: 4,
     marginBottom: 16,
@@ -997,15 +997,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   toggleButtonActive: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
   },
   toggleButtonText: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     fontWeight: '600',
   },
   toggleButtonTextActive: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
   },
   centeredMessage: {
     flex: 1,
@@ -1014,7 +1014,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   sectionCard: {
-    backgroundColor: '#E5EAF0',
+    backgroundColor: colors.panel,
     borderRadius: BORDER_RADIUS,
     padding: 14,
     marginBottom: 12,
@@ -1022,20 +1022,20 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 4,
   },
   sectionSubtitle: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   calendarContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: BORDER_RADIUS,
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
   },
   calendarHeaderRow: {
     flexDirection: 'row',
@@ -1049,13 +1049,13 @@ const styles = StyleSheet.create({
   },
   calendarNavText: {
     fontSize: 16,
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '600',
   },
   calendarMonthText: {
     fontSize: 16,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
   },
   calendarWeekRow: {
     flexDirection: 'row',
@@ -1066,7 +1066,7 @@ const styles = StyleSheet.create({
     width: 36,
     textAlign: 'center',
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   calendarDayCell: {
     width: 36,
@@ -1077,14 +1077,14 @@ const styles = StyleSheet.create({
   },
   calendarDayText: {
     fontSize: 13,
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '600',
   },
   calendarDaySelected: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   calendarDaySelectedText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
   },
   calendarDayToday: {
     color: GREEN_ACCENT,
@@ -1097,11 +1097,11 @@ const styles = StyleSheet.create({
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     marginHorizontal: 1,
   },
   eventCard: {
-    backgroundColor: CARD_BACKGROUND,
+    backgroundColor: colors.card,
     borderRadius: BORDER_RADIUS,
     padding: 16,
     marginBottom: 12,
@@ -1120,17 +1120,17 @@ const styles = StyleSheet.create({
   eventTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     flex: 1,
     marginRight: 8,
   },
   eventDate: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   eventDescription: {
     fontSize: 14,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 10,
   },
   eventMetaRow: {
@@ -1141,13 +1141,13 @@ const styles = StyleSheet.create({
   },
   eventMetaText: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   recurrenceBadge: {
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: '#DCFCE7',
+    backgroundColor: colors.successSoft,
   },
   recurrenceBadgeText: {
     fontSize: 11,
@@ -1159,14 +1159,14 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   editButton: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
     marginRight: 8,
   },
   editButtonText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1189,12 +1189,12 @@ const styles = StyleSheet.create({
   emptyStateTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
   },
   emptyStateSubtitle: {
     fontSize: 14,
-    color: MUTED_TEXT,
+    color: colors.muted,
     textAlign: 'center',
     paddingHorizontal: 16,
   },
@@ -1205,7 +1205,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 999,
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -1215,7 +1215,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   fabText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 30,
     lineHeight: 32,
   },
@@ -1226,11 +1226,11 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: CARD_BACKGROUND,
+    backgroundColor: colors.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
@@ -1240,23 +1240,23 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 16,
   },
   modalSubtitle: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 8,
   },
   modalLabel: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 4,
     marginTop: 8,
   },
   modalHelperText: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginTop: 6,
   },
   modalScrollContent: {
@@ -1265,12 +1265,12 @@ const styles = StyleSheet.create({
   input: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: BUTLER_BLUE,
-    backgroundColor: '#FFFFFF',
+    color: colors.accent,
+    backgroundColor: colors.card,
   },
   inputMultiline: {
     height: 72,
@@ -1285,40 +1285,40 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     marginRight: 8,
     marginBottom: 6,
   },
   dropdownChipActive: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   dropdownChipText: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   dropdownChipTextActive: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontWeight: '600',
   },
   datePickerButton: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     paddingHorizontal: 12,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
   },
   datePickerShell: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     marginTop: 8,
     overflow: 'hidden',
   },
   datePickerText: {
     fontSize: 14,
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '500',
   },
   modalActionsRow: {
@@ -1333,18 +1333,20 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   modalCancelButton: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
   },
   modalPrimaryButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   modalCancelText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '500',
   },
   modalPrimaryText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontWeight: '600',
   },
 });
+
+
 

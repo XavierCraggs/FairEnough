@@ -31,11 +31,9 @@ import {
   notifySuccess,
   notifyWarning,
 } from '@/utils/haptics';
+import { useAppTheme } from '@/hooks/useAppTheme';
+import { AppTheme } from '@/constants/AppColors';
 
-const BACKGROUND_COLOR = '#F8FAF9';
-const BUTLER_BLUE = '#4A6572';
-const CARD_BACKGROUND = '#FFFFFF';
-const MUTED_TEXT = '#6B7280';
 const GREEN_ACCENT = '#16A34A';
 const RED_ACCENT = '#DC2626';
 const AMBER_ACCENT = '#F59E0B';
@@ -48,6 +46,8 @@ interface MemberOption {
 
 export default function FinanceScreen() {
   const { user, userProfile } = useAuth();
+  const colors = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const houseId = userProfile?.houseId ?? null;
   const currentUserId = user?.uid ?? null;
 
@@ -105,17 +105,25 @@ export default function FinanceScreen() {
   const getUrgencyTone = useCallback(
     (ageDays: number, confirmed: boolean) => {
       if (confirmed) {
-        return { label: 'Settled', color: '#166534', background: '#DCFCE7' };
+        return { label: 'Settled', color: colors.success, background: colors.successSoft };
       }
       if (ageDays >= 7) {
-        return { label: `Overdue ${ageDays}d`, color: '#B91C1C', background: '#FEE2E2' };
+        return {
+          label: `Overdue ${ageDays}d`,
+          color: colors.danger,
+          background: colors.dangerSoft,
+        };
       }
       if (ageDays >= 3) {
-        return { label: `Aging ${ageDays}d`, color: '#92400E', background: '#FEF3C7' };
+        return {
+          label: `Aging ${ageDays}d`,
+          color: colors.warning,
+          background: colors.warningSoft,
+        };
       }
-      return { label: 'Recent', color: BUTLER_BLUE, background: '#E5E7EB' };
+      return { label: 'Recent', color: colors.accent, background: colors.accentSoft };
     },
-    []
+    [colors]
   );
 
   useEffect(() => {
@@ -371,8 +379,8 @@ export default function FinanceScreen() {
       if (!relatedTransactions.length) {
         return {
           label: 'Net balance',
-          backgroundColor: '#E5E7EB',
-          color: BUTLER_BLUE,
+          backgroundColor: colors.accentSoft,
+          color: colors.accent,
         };
       }
 
@@ -383,14 +391,14 @@ export default function FinanceScreen() {
       if (allConfirmed) {
         return {
           label: 'Confirmed',
-          backgroundColor: '#DCFCE7',
+          backgroundColor: colors.successSoft,
           color: '#166534',
         };
       }
 
       return {
         label: 'Pending confirmations',
-        backgroundColor: '#FEF3C7',
+        backgroundColor: colors.warningSoft,
         color: '#92400E',
       };
     },
@@ -404,7 +412,7 @@ export default function FinanceScreen() {
       return (
         <RNView style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Debt Summary</Text>
-          <ActivityIndicator color={BUTLER_BLUE} />
+          <ActivityIndicator color={colors.accent} />
         </RNView>
       );
     }
@@ -436,7 +444,7 @@ export default function FinanceScreen() {
             ? RED_ACCENT
             : isCurrentUserCreditor
             ? GREEN_ACCENT
-            : BUTLER_BLUE;
+            : colors.accent;
           const status = getDebtStatus(debt);
           return (
             <RNView key={`${debt.from}-${debt.to}`} style={styles.debtCard}>
@@ -481,21 +489,21 @@ export default function FinanceScreen() {
     const urgencyTone = getUrgencyTone(ageDays, isConfirmed);
 
     let badgeLabel = 'Pending';
-    let badgeBackground = '#E5E7EB';
-    let badgeColor = BUTLER_BLUE;
+    let badgeBackground = colors.accentSoft;
+    let badgeColor = colors.accent;
 
     if (isConfirmed) {
       badgeLabel = 'Confirmed';
-      badgeBackground = '#DCFCE7';
-      badgeColor = '#166534';
+      badgeBackground = colors.successSoft;
+      badgeColor = colors.success;
     } else if (needsUserConfirmation) {
       badgeLabel = 'Needs your confirmation';
-      badgeBackground = '#FEE2E2';
-      badgeColor = '#B91C1C';
+      badgeBackground = colors.dangerSoft;
+      badgeColor = colors.danger;
     } else if (isPayer) {
       badgeLabel = 'Waiting on confirmations';
-      badgeBackground = '#FEF3C7';
-      badgeColor = '#92400E';
+      badgeBackground = colors.warningSoft;
+      badgeColor = colors.warning;
     }
 
     return (
@@ -591,7 +599,7 @@ export default function FinanceScreen() {
             <TextInput
               style={styles.input}
               placeholder="0.00"
-              placeholderTextColor={MUTED_TEXT}
+              placeholderTextColor={colors.muted}
               keyboardType="numeric"
               value={amountInput}
               onChangeText={setAmountInput}
@@ -601,7 +609,7 @@ export default function FinanceScreen() {
             <TextInput
               style={styles.input}
               placeholder="Electricity bill"
-              placeholderTextColor={MUTED_TEXT}
+              placeholderTextColor={colors.muted}
               value={descriptionInput}
               onChangeText={setDescriptionInput}
             />
@@ -660,7 +668,7 @@ export default function FinanceScreen() {
                 disabled={submitting}
               >
                 {submitting ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color={colors.onAccent} />
                 ) : (
                   <Text style={styles.modalPrimaryText}>
                     {editingTransaction ? 'Save changes' : 'Add transaction'}
@@ -676,7 +684,7 @@ export default function FinanceScreen() {
 
   if (!isInHouse) {
     return (
-      <View style={styles.container} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+      <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
         <RNView style={styles.centeredMessage}>
           <Text style={styles.title}>Join or create a house</Text>
           <Text style={styles.description}>
@@ -689,7 +697,7 @@ export default function FinanceScreen() {
   }
 
   return (
-    <View style={styles.container} lightColor={BACKGROUND_COLOR} darkColor={BACKGROUND_COLOR}>
+    <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
       <FlatList
         data={transactions}
         keyExtractor={(item) => item.transactionId}
@@ -709,7 +717,7 @@ export default function FinanceScreen() {
         renderItem={renderTransactionCard}
         ListEmptyComponent={renderEmptyState}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BUTLER_BLUE} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
         }
       />
 
@@ -721,14 +729,14 @@ export default function FinanceScreen() {
 
       {loading && (
         <RNView style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color={BUTLER_BLUE} />
+          <ActivityIndicator size="large" color={colors.accent} />
         </RNView>
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppTheme) => StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -739,12 +747,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
   },
   description: {
     fontSize: 15,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 20,
   },
   centeredMessage: {
@@ -754,7 +762,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   sectionCard: {
-    backgroundColor: CARD_BACKGROUND,
+    backgroundColor: colors.card,
     borderRadius: BORDER_RADIUS,
     padding: 16,
     marginBottom: 16,
@@ -767,7 +775,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 12,
   },
   sectionHeaderRow: {
@@ -775,7 +783,7 @@ const styles = StyleSheet.create({
   },
   debtCard: {
     borderRadius: 14,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surface,
     padding: 12,
     marginBottom: 10,
   },
@@ -786,7 +794,7 @@ const styles = StyleSheet.create({
   },
   debtLabel: {
     fontSize: 14,
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '600',
     flex: 1,
     marginRight: 8,
@@ -802,23 +810,23 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   settleButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
   },
   settleButtonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 12,
     fontWeight: '600',
   },
   transactionCard: {
-    backgroundColor: CARD_BACKGROUND,
+    backgroundColor: colors.card,
     borderRadius: BORDER_RADIUS,
     padding: 16,
     marginBottom: 12,
     borderLeftWidth: 4,
-    borderLeftColor: '#E5E7EB',
+    borderLeftColor: colors.border,
     shadowColor: '#000',
     shadowOpacity: 0.06,
     shadowRadius: 8,
@@ -834,17 +842,17 @@ const styles = StyleSheet.create({
   transactionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 4,
   },
   transactionAmount: {
     fontSize: 16,
     fontWeight: '700',
-    color: BUTLER_BLUE,
+    color: colors.accent,
   },
   transactionMeta: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 4,
   },
   urgencyRow: {
@@ -887,12 +895,12 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   confirmButtonText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 12,
     fontWeight: '600',
   },
   deleteButton: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerSoft,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
@@ -903,14 +911,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   editButton: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
     marginRight: 8,
   },
   editButtonText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -922,12 +930,12 @@ const styles = StyleSheet.create({
   emptyStateTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 8,
   },
   emptyStateSubtitle: {
     fontSize: 14,
-    color: MUTED_TEXT,
+    color: colors.muted,
     textAlign: 'center',
     paddingHorizontal: 16,
   },
@@ -938,7 +946,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 999,
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -948,7 +956,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   fabText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontSize: 30,
     lineHeight: 32,
   },
@@ -959,11 +967,11 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: CARD_BACKGROUND,
+    backgroundColor: colors.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
@@ -972,34 +980,34 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: BUTLER_BLUE,
+    color: colors.accent,
     marginBottom: 16,
   },
   modalSubtitle: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 8,
   },
   modalLabel: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginBottom: 4,
     marginTop: 8,
   },
   modalHelperText: {
     fontSize: 12,
-    color: MUTED_TEXT,
+    color: colors.muted,
     marginTop: 8,
   },
   input: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: BUTLER_BLUE,
-    backgroundColor: '#FFFFFF',
+    color: colors.accent,
+    backgroundColor: colors.card,
   },
   dropdownContainer: {
     flexDirection: 'row',
@@ -1010,18 +1018,18 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     marginRight: 8,
     marginBottom: 6,
   },
   dropdownChipActive: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   multiSelectChip: {
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
     marginRight: 8,
     marginBottom: 6,
   },
@@ -1030,10 +1038,10 @@ const styles = StyleSheet.create({
   },
   dropdownChipText: {
     fontSize: 13,
-    color: MUTED_TEXT,
+    color: colors.muted,
   },
   dropdownChipTextActive: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontWeight: '600',
   },
   modalActionsRow: {
@@ -1048,18 +1056,20 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   modalCancelButton: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.accentSoft,
   },
   modalPrimaryButton: {
-    backgroundColor: BUTLER_BLUE,
+    backgroundColor: colors.accent,
   },
   modalCancelText: {
-    color: BUTLER_BLUE,
+    color: colors.accent,
     fontWeight: '500',
   },
   modalPrimaryText: {
-    color: '#FFFFFF',
+    color: colors.onAccent,
     fontWeight: '600',
   },
 });
+
+
 

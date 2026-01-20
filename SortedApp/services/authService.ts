@@ -1,10 +1,11 @@
 // services/authService.ts
-import {
+  import {
     createUserWithEmailAndPassword,
     signInWithEmailAndPassword,
     signOut,
     sendPasswordResetEmail,
     updateProfile,
+    updateEmail,
     User,
     UserCredential,
     AuthError,
@@ -33,6 +34,8 @@ import {
     name: string;
     houseId: string | null;
     totalPoints: number;
+    photoUrl?: string | null;
+    phone?: string | null;
     createdAt: any;
     updatedAt: any;
   }
@@ -268,6 +271,39 @@ import {
         throw this.handleAuthError(error);
       }
     }
+
+    /**
+     * Update user's email address
+     * Updates both Firebase Auth and Firestore document
+     * 
+     * @param email - New email
+     * @throws AuthServiceError on failure
+     */
+    async updateUserEmail(email: string): Promise<void> {
+      try {
+        const user = auth.currentUser;
+        if (!user) {
+          throw new Error('No authenticated user');
+        }
+
+        if (!email.trim()) {
+          throw new Error('Email is required');
+        }
+
+        await updateEmail(user, email.trim().toLowerCase());
+
+        await setDoc(
+          doc(db, 'users', user.uid),
+          {
+            email: email.trim().toLowerCase(),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (error) {
+        throw this.handleAuthError(error);
+      }
+    }
   
     /**
      * Create initial user document in Firestore
@@ -284,6 +320,8 @@ import {
         name: name,
         houseId: null,
         totalPoints: 0,
+        photoUrl: user.photoURL || null,
+        phone: user.phoneNumber || null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -338,6 +376,13 @@ import {
             return {
               code: authError.code,
               message: 'Too many failed attempts. Please try again later.',
+              originalError: authError,
+            };
+
+          case 'auth/requires-recent-login':
+            return {
+              code: authError.code,
+              message: 'Please sign in again before updating sensitive account details.',
               originalError: authError,
             };
           
