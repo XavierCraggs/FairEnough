@@ -5,14 +5,15 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  Alert,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { router } from 'expo-router';
 import authService, { AuthServiceError } from '@/services/authService';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
+import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 export default function LoginScreen() {
   const colors = useAppTheme();
@@ -21,6 +22,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rememberMe, setRememberMe] = useState(false);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -43,19 +45,8 @@ export default function LoginScreen() {
     }
   };
 
-  const handleForgotPassword = async () => {
-    if (!email.trim()) {
-      Alert.alert('Email Required', 'Please enter your email address first');
-      return;
-    }
-
-    try {
-      await authService.resetPassword(email);
-      Alert.alert('Email Sent', 'Check your inbox for password reset instructions');
-    } catch (err) {
-      const authError = err as AuthServiceError;
-      Alert.alert('Error', authError.message);
-    }
+  const handleForgotPassword = () => {
+    router.push('/(auth)/reset-password');
   };
 
   return (
@@ -64,35 +55,80 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
-        <Text style={styles.title}>Welcome Back</Text>
-        <Text style={styles.subtitle}>Sign in to continue</Text>
+        <Pressable style={styles.backButton} onPress={() => router.back()}>
+          <FontAwesome name="chevron-left" size={18} color={colors.accent} />
+        </Pressable>
+
+        <View style={styles.logoCircle}>
+          <FontAwesome name="home" size={22} color={colors.accent} />
+        </View>
+
+        <Text style={styles.title}>Welcome back</Text>
+        <Text style={styles.subtitle}>
+          Please enter your email & password to sign in.
+        </Text>
 
         <View style={styles.form}>
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor={colors.muted}
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            autoComplete="email"
-            editable={!loading}
-          />
+          <Text style={styles.inputLabel}>Email</Text>
+          <View style={styles.inputRow}>
+            <FontAwesome name="envelope" size={14} color={colors.muted} />
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor={colors.muted}
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoComplete="email"
+              editable={!loading}
+            />
+          </View>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={colors.muted}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoCapitalize="none"
-            autoComplete="password"
-            editable={!loading}
-          />
+          <Text style={styles.inputLabel}>Password</Text>
+          <View style={styles.inputRow}>
+            <FontAwesome name="lock" size={16} color={colors.muted} />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor={colors.muted}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoComplete="password"
+              editable={!loading}
+            />
+          </View>
 
           {error && <Text style={styles.errorText}>{error}</Text>}
+
+          <View style={styles.rowBetween}>
+            <Pressable
+              style={styles.rememberRow}
+              onPress={() => setRememberMe((value) => !value)}
+            >
+              <View
+                style={[
+                  styles.checkbox,
+                  rememberMe && styles.checkboxActive,
+                ]}
+              >
+                {rememberMe && (
+                  <FontAwesome name="check" size={10} color={colors.onAccent} />
+                )}
+              </View>
+              <Text style={styles.rememberText}>Remember me</Text>
+            </Pressable>
+
+            <TouchableOpacity
+              style={styles.forgotButton}
+              onPress={handleForgotPassword}
+              disabled={loading}
+            >
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+          </View>
 
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
@@ -106,13 +142,6 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.forgotButton}
-            onPress={handleForgotPassword}
-            disabled={loading}
-          >
-            <Text style={styles.forgotText}>Forgot Password?</Text>
-          </TouchableOpacity>
         </View>
 
         <View style={styles.footer}>
@@ -134,48 +163,105 @@ const createStyles = (colors: AppTheme) =>
   content: {
     flex: 1,
     paddingHorizontal: 32,
-    paddingTop: 80,
+    paddingTop: 48,
     paddingBottom: 40,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     backgroundColor: colors.background,
   },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+  },
+  logoCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+  },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '600',
     color: colors.accent,
-    marginBottom: 8,
-    textAlign: 'center',
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: colors.muted,
-    marginBottom: 48,
-    textAlign: 'center',
+    marginBottom: 28,
   },
   form: {
     width: '100%',
   },
-  input: {
+  inputLabel: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 6,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: colors.surface,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: colors.text,
-    marginBottom: 16,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderWidth: 1,
     borderColor: colors.border,
+    marginBottom: 16,
+  },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    color: colors.text,
+    marginLeft: 10,
+    padding: 0,
   },
   errorText: {
     color: colors.danger,
     fontSize: 14,
     marginBottom: 16,
-    textAlign: 'center',
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  rememberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    backgroundColor: colors.surface,
+  },
+  checkboxActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  rememberText: {
+    fontSize: 13,
+    color: colors.muted,
   },
   button: {
     backgroundColor: colors.accent,
-    borderRadius: 12,
-    paddingVertical: 16,
+    borderRadius: 999,
+    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
@@ -189,12 +275,12 @@ const createStyles = (colors: AppTheme) =>
     fontWeight: '600',
   },
   forgotButton: {
-    marginTop: 16,
     alignItems: 'center',
   },
   forgotText: {
     color: colors.accent,
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '600',
   },
   footer: {
     flexDirection: 'row',

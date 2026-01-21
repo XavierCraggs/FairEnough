@@ -189,9 +189,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Redirects users to appropriate screens based on authentication
    * 
    * Rules:
-   * - Logged out → redirect to (auth)/login
-   * - Logged in without house → redirect to (auth)/house-setup
-   * - Logged in with house → redirect to (tabs)/index
+   * - Logged out -> redirect to (auth)
+   * - Logged in without house -> redirect to (auth)/house-setup
+   * - Logged in with house -> redirect to (tabs)/index
    * - Prevents redirect loops by checking current location
    */
   useEffect(() => {
@@ -204,38 +204,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const inAuthGroup = segments[0] === '(auth)';
     const inTabsGroup = segments[0] === '(tabs)';
     const onHouseSetup = segments[1] === 'house-setup';
-    const onLogin = segments[1] === 'login';
-    const onRegister = segments[1] === 'register';
 
     /**
      * Navigation logic:
-     * 
+     *
      * Case 1: User is logged out
-     * - If not already in auth screens, redirect to login
-     * 
+     * - If not already in auth screens, redirect to welcome
+     *
      * Case 2: User is logged in
-     * - If user has no house → redirect to house-setup
-     * - If user has house → redirect to main app
+     * - If user has no house -> redirect to house-setup
+     * - If user has house -> redirect to main app
      * - Don't redirect if already on the correct screen
      */
     if (!user && !inAuthGroup) {
-      // User is logged out but not on auth screen → redirect to login
-      router.replace('/(auth)/login');
+      // User is logged out but not on auth screen -> redirect to welcome
+      router.replace('/(auth)');
       setInitialNavigationDone(true);
     } else if (user && userProfile !== null) {
       // User is logged in and profile is loaded
       const hasHouse = userProfile.houseId !== null;
-      
+
       if (!hasHouse && !onHouseSetup) {
-        // User has no house and not on house-setup → redirect to house-setup
+        // User has no house and not on house-setup -> redirect to house-setup
         router.replace('/(auth)/house-setup');
         setInitialNavigationDone(true);
-      } else if (hasHouse && (onHouseSetup || (inAuthGroup && !onLogin && !onRegister))) {
-        // User has house but on house-setup or other auth screens → redirect to main app
+      } else if (hasHouse && (onHouseSetup || inAuthGroup)) {
+        // User has house but on auth screens -> redirect to main app
         router.replace('/(tabs)/');
         setInitialNavigationDone(true);
       } else if (!initialNavigationDone && hasHouse && !inTabsGroup) {
-        // Initial load, user has house, not in tabs → redirect to main app
+        // Initial load, user has house, not in tabs -> redirect to main app
         router.replace('/(tabs)/');
         setInitialNavigationDone(true);
       } else if (!initialNavigationDone) {

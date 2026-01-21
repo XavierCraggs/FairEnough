@@ -9,6 +9,7 @@
     User,
     UserCredential,
     AuthError,
+    FacebookAuthProvider,
     GoogleAuthProvider,
     signInWithCredential,
     OAuthProvider,
@@ -147,6 +148,33 @@
           );
         }
   
+        return userCredential;
+      } catch (error) {
+        throw this.handleAuthError(error);
+      }
+    }
+
+    /**
+     * Sign in with Facebook OAuth
+     * Platform-specific implementation required (see comments)
+     *
+     * @param accessToken - Facebook access token
+     * @returns UserCredential on success
+     * @throws AuthServiceError on failure
+     */
+    async signInWithFacebook(accessToken: string): Promise<UserCredential> {
+      try {
+        const credential = FacebookAuthProvider.credential(accessToken);
+        const userCredential = await signInWithCredential(auth, credential);
+
+        const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
+        if (!userDoc.exists()) {
+          await this.createUserDocument(
+            userCredential.user,
+            userCredential.user.displayName || 'User'
+          );
+        }
+
         return userCredential;
       } catch (error) {
         throw this.handleAuthError(error);

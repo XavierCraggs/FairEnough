@@ -28,6 +28,7 @@ export interface TransactionData {
   amount: number;
   description: string;
   splitWith: string[];
+  splitAmounts?: Record<string, number> | null;
   confirmedBy: string[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -79,7 +80,8 @@ class FinanceService {
     payerId: string,
     amount: number,
     description: string,
-    splitWith: string[]
+    splitWith: string[],
+    splitAmounts?: Record<string, number> | null
   ): Promise<TransactionData> {
     try {
       if (!houseId || !payerId) {
@@ -138,6 +140,12 @@ class FinanceService {
 
         const transactionsRef = collection(db, 'houses', houseId, 'transactions');
         const newTransactionRef = doc(transactionsRef);
+        const normalizedSplitAmounts = this.normalizeSplitAmounts(
+          splitAmounts,
+          normalizedSplit,
+          amount
+        );
+
         const newTransaction = {
           houseId,
           payerId,
@@ -149,6 +157,10 @@ class FinanceService {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         };
+
+        if (normalizedSplitAmounts) {
+          (newTransaction as TransactionData).splitAmounts = normalizedSplitAmounts;
+        }
 
         transaction.set(newTransactionRef, newTransaction);
 
@@ -192,6 +204,7 @@ class FinanceService {
       amount: number;
       description: string;
       splitWith: string[];
+      splitAmounts?: Record<string, number> | null;
     }
   ): Promise<TransactionData> {
     try {
@@ -260,13 +273,23 @@ class FinanceService {
           );
         }
 
-        const payload = {
+        const normalizedSplitAmounts = this.normalizeSplitAmounts(
+          updates.splitAmounts,
+          normalizedSplit,
+          updates.amount
+        );
+
+        const payload: Partial<TransactionData> = {
           amount: Math.round(updates.amount * 100) / 100,
           description: updates.description.trim(),
           splitWith: normalizedSplit,
           confirmedBy: [userId],
           updatedAt: serverTimestamp(),
         };
+
+        if (typeof updates.splitAmounts !== 'undefined') {
+          payload.splitAmounts = normalizedSplitAmounts ?? null;
+        }
 
         transaction.update(transactionRef, payload);
 
@@ -502,6 +525,7 @@ class FinanceService {
           payerId: transaction.payerId,
           amount: transaction.amount,
           splitWith: transaction.splitWith || [],
+          splitAmounts: transaction.splitAmounts,
         })),
         (userId) => memberNames.get(userId) || 'Unknown'
       );
@@ -538,6 +562,35 @@ class FinanceService {
         'You are not a member of this house.'
       );
     }
+  }
+
+  private normalizeSplitAmounts(
+    splitAmounts: Record<string, number> | null | undefined,
+    splitWith: string[],
+    amount: number
+  ): Record<string, number> | null | undefined {
+    if (splitAmounts === null) {
+      return null;
+    }
+    if (!splitAmounts) {
+      return undefined;
+    }
+
+    const normalized: Record<string, number> = {};
+    splitWith.forEach((memberId) => {
+      const value = Number(splitAmounts[memberId]);
+      normalized[memberId] = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+    });
+
+    const total = Object.values(normalized).reduce((sum, value) => sum + value, 0);
+    if (Math.abs(total - amount) > 0.02) {
+      throw this.createError(
+        FinanceServiceErrorCode.INVALID_INPUT,
+        'Split amounts must add up to the total amount.'
+      );
+    }
+
+    return normalized;
   }
 
   /**

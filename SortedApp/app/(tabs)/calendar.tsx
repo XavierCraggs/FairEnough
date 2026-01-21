@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
+  Animated,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -33,8 +33,9 @@ import {
 } from '@/utils/haptics';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
+import ScreenShell from '@/components/ScreenShell';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const GREEN_ACCENT = '#16A34A';
 const BORDER_RADIUS = 16;
 const UPCOMING_DAYS = 60;
 
@@ -93,6 +94,13 @@ export default function CalendarScreen() {
   const { user, userProfile } = useAuth();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const scrollY = useRef(new Animated.Value(0));
+  const headerOpacity = scrollY.current.interpolate({
+    inputRange: [0, 80],
+    outputRange: [0, 0.92],
+    extrapolate: 'clamp',
+  });
   const houseId = userProfile?.houseId ?? null;
   const currentUserId = user?.uid ?? null;
 
@@ -796,7 +804,7 @@ export default function CalendarScreen() {
 
   if (!isInHouse) {
     return (
-      <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
+      <ScreenShell>
         <RNView style={styles.centeredMessage}>
           <Text style={styles.title}>Join or create a house</Text>
           <Text style={styles.description}>
@@ -804,23 +812,25 @@ export default function CalendarScreen() {
             events here.
           </Text>
         </RNView>
-      </View>
+      </ScreenShell>
     );
   }
 
   return (
-    <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
+    <ScreenShell style={styles.container}>
       {viewMode === 'list' ? (
-        <FlatList
+        <Animated.FlatList
           data={eventOccurrences}
           keyExtractor={(item) => item.occurrenceId}
           contentContainerStyle={styles.listContent}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY.current } } }],
+            { useNativeDriver: true }
+          )}
+          scrollEventThrottle={16}
           ListHeaderComponent={
             <RNView>
               <Text style={styles.title}>Calendar</Text>
-              <Text style={styles.description}>
-                Track shared house events, rent days, and important schedules in one place.
-              </Text>
               <RNView style={styles.toggleRow}>
                 <Pressable
                   style={[
@@ -876,16 +886,18 @@ export default function CalendarScreen() {
           }
         />
       ) : (
-        <FlatList
+        <Animated.FlatList
           data={selectedDateOccurrences}
           keyExtractor={(item) => item.occurrenceId}
           contentContainerStyle={styles.listContent}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY.current } } }],
+            { useNativeDriver: true }
+          )}
+          scrollEventThrottle={16}
           ListHeaderComponent={
             <RNView>
               <Text style={styles.title}>Calendar</Text>
-              <Text style={styles.description}>
-                Pick a date to see shared events and schedules.
-              </Text>
               <RNView style={styles.toggleRow}>
                 <Pressable
                   style={[
@@ -953,6 +965,20 @@ export default function CalendarScreen() {
         <Text style={styles.fabText}>+</Text>
       </TouchableOpacity>
 
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.stickyHeader,
+          {
+            paddingTop: insets.top,
+            height: insets.top + 56,
+            opacity: headerOpacity,
+          },
+        ]}
+      >
+        <Text style={styles.stickyHeaderTitle}>Calendar</Text>
+      </Animated.View>
+
       {renderModal()}
 
       {loading && (
@@ -960,7 +986,7 @@ export default function CalendarScreen() {
           <ActivityIndicator size="large" color={colors.accent} />
         </RNView>
       )}
-    </View>
+    </ScreenShell>
   );
 }
 
@@ -969,14 +995,29 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    padding: 20,
-    paddingBottom: 96,
+    padding: 24,
+    paddingBottom: 160,
   },
   title: {
     fontSize: 28,
     fontWeight: '600',
     color: colors.accent,
     marginBottom: 8,
+  },
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 56,
+    backgroundColor: colors.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stickyHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.accent,
   },
   description: {
     fontSize: 15,
@@ -1087,7 +1128,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.onAccent,
   },
   calendarDayToday: {
-    color: GREEN_ACCENT,
+    color: colors.success,
   },
   calendarDotsRow: {
     flexDirection: 'row',
@@ -1152,7 +1193,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   recurrenceBadgeText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#166534',
+    color: colors.success,
   },
   eventActionsRow: {
     flexDirection: 'row',
@@ -1171,13 +1212,13 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontWeight: '600',
   },
   deleteButton: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerSoft,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
   },
   deleteButtonText: {
-    color: '#B91C1C',
+    color: colors.danger,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1201,7 +1242,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 24,
+    bottom: 112,
     width: 56,
     height: 56,
     borderRadius: 999,

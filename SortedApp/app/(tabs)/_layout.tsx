@@ -4,6 +4,7 @@ import { Tabs } from 'expo-router';
 
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import { useAppTheme } from '@/hooks/useAppTheme';
+import ButlerTabBar from '@/components/ButlerTabBar';
 
 // You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
 function TabBarIcon(props: {
@@ -17,33 +18,26 @@ export default function TabLayout() {
   const colors = useAppTheme();
   return (
     <Tabs
+      tabBar={(props) => <ButlerTabBar {...props} />}
       screenOptions={{
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.tabInactive,
-        headerShown: useClientOnlyValue(false, true),
-        headerStyle: {
-          backgroundColor: colors.background,
-        },
-        headerTintColor: colors.accent,
-        headerTitleStyle: {
-          fontWeight: '600',
-        },
+        tabBarShowLabel: false,
         tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
+          backgroundColor: 'transparent',
+          borderTopColor: 'transparent',
+          position: 'absolute',
+          elevation: 0,
+          shadowOpacity: 0,
         },
+        headerShown: false,
+        tabBarHideOnKeyboard: true,
       }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
-        }}
-      />
       <Tabs.Screen
         name="chores"
         options={{
           title: 'Chores',
+          headerShown: false,
           tabBarIcon: ({ color }) => <TabBarIcon name="list" color={color} />,
         }}
       />
@@ -51,13 +45,23 @@ export default function TabLayout() {
         name="finance"
         options={{
           title: 'Finance',
+          headerShown: false,
           tabBarIcon: ({ color }) => <TabBarIcon name="dollar" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Dashboard',
+          headerShown: false,
+          tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
         }}
       />
       <Tabs.Screen
         name="calendar"
         options={{
           title: 'Calendar',
+          headerShown: false,
           tabBarIcon: ({ color }) => <TabBarIcon name="calendar" color={color} />,
         }}
       />
@@ -65,6 +69,7 @@ export default function TabLayout() {
         name="settings"
         options={{
           title: 'Settings',
+          headerShown: false,
           tabBarIcon: ({ color }) => <TabBarIcon name="cog" color={color} />,
         }}
       />

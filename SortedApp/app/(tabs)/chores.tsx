@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
+  Animated,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -36,12 +36,13 @@ import {
 } from '@/utils/haptics';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
+import ScreenShell from '@/components/ScreenShell';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const GREEN_ACCENT = '#16A34A';
 const BORDER_RADIUS = 16;
 
 type FrequencyOption = 'daily' | 'weekly' | 'one-time';
-type StatusFilter = 'all' | 'pending' | 'completed' | 'upcoming';
+type StatusFilter = 'active' | 'upcoming' | 'history';
 
 interface MemberOption {
   userId: string;
@@ -62,10 +63,9 @@ const FREQUENCY_OPTIONS: { label: string; value: FrequencyOption }[] = [
 ];
 
 const STATUS_FILTERS: { label: string; value: StatusFilter }[] = [
-  { label: 'All', value: 'all' },
-  { label: 'Pending', value: 'pending' },
-  { label: 'Completed', value: 'completed' },
+  { label: 'Active', value: 'active' },
   { label: 'Upcoming', value: 'upcoming' },
+  { label: 'History', value: 'history' },
 ];
 
 const startOfDay = (date: Date) =>
@@ -111,6 +111,13 @@ export default function ChoresScreen() {
   const { user, userProfile } = useAuth();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const scrollY = useRef(new Animated.Value(0));
+  const headerOpacity = scrollY.current.interpolate({
+    inputRange: [0, 80],
+    outputRange: [0, 0.92],
+    extrapolate: 'clamp',
+  });
   const houseId = userProfile?.houseId ?? null;
 
   const [chores, setChores] = useState<ChoreData[]>([]);
@@ -125,7 +132,7 @@ export default function ChoresScreen() {
   const [memberStats, setMemberStats] = useState<FairnessMemberStat[]>([]);
   const [fairnessWindowDays, setFairnessWindowDays] = useState<number | null>(null);
 
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
   const [sortByPointsDesc, setSortByPointsDesc] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -434,9 +441,13 @@ export default function ChoresScreen() {
     let result = chores;
     const today = startOfDay(new Date());
 
-    if (statusFilter === 'pending') {
-      result = result.filter((c) => c.status === 'pending' || c.status === 'overdue');
-    } else if (statusFilter === 'completed') {
+    if (statusFilter === 'active') {
+      result = result.filter((c) => {
+        if (c.status === 'completed') return false;
+        const dueDate = getDueDate(c, today);
+        return !!dueDate && dueDate <= today;
+      });
+    } else if (statusFilter === 'history') {
       result = result.filter((c) => c.status === 'completed');
     } else if (statusFilter === 'upcoming') {
       result = result.filter((c) => {
@@ -450,6 +461,11 @@ export default function ChoresScreen() {
         const dueA = getDueDate(a, today)?.getTime() ?? Number.MAX_SAFE_INTEGER;
         const dueB = getDueDate(b, today)?.getTime() ?? Number.MAX_SAFE_INTEGER;
         if (dueA !== dueB) return dueA - dueB;
+      }
+      if (statusFilter === 'history') {
+        const lastA = a.lastCompletedAt?.toDate ? a.lastCompletedAt.toDate().getTime() : 0;
+        const lastB = b.lastCompletedAt?.toDate ? b.lastCompletedAt.toDate().getTime() : 0;
+        if (lastA !== lastB) return lastB - lastA;
       }
       return sortByPointsDesc ? b.points - a.points : a.points - b.points;
     });
@@ -471,21 +487,21 @@ export default function ChoresScreen() {
     let color = colors.accent;
 
     if (chore.status === 'completed') {
-      backgroundColor = '#DCFCE7';
-      color = '#166534';
+      backgroundColor = colors.successSoft;
+      color = colors.success;
       if (dueLabel) {
         label = `Next ${dueLabel.toLowerCase()}`;
-        backgroundColor = '#DBEAFE';
-        color = '#1D4ED8';
+        backgroundColor = colors.infoSoft;
+        color = colors.accent;
       }
     } else if (dueLabel?.startsWith('Overdue')) {
       label = dueLabel;
-      backgroundColor = '#FEE2E2';
-      color = '#B91C1C';
+      backgroundColor = colors.dangerSoft;
+      color = colors.danger;
     } else if (dueLabel) {
       label = dueLabel;
-      backgroundColor = '#FEF3C7';
-      color = '#92400E';
+      backgroundColor = colors.warningSoft;
+      color = colors.warning;
     }
 
     return (
@@ -590,7 +606,7 @@ export default function ChoresScreen() {
                 handleDeleteChore(item);
               }}
             >
-              <Text style={[styles.menuItemText, { color: '#B91C1C' }]}>
+              <Text style={[styles.menuItemText, { color: colors.danger }]}>
                 Delete
               </Text>
             </Pressable>
@@ -605,12 +621,27 @@ export default function ChoresScreen() {
       return null;
     }
 
+    const emptyCopy: Record<StatusFilter, { title: string; subtitle: string }> = {
+      active: {
+        title: 'No active chores',
+        subtitle: 'Nothing due today. Check Upcoming to get ahead.',
+      },
+      upcoming: {
+        title: 'No upcoming chores',
+        subtitle: 'Set up recurring tasks to keep the house on track.',
+      },
+      history: {
+        title: 'No completed chores yet',
+        subtitle: 'Finish a task and it will show up here.',
+      },
+    };
+
+    const copy = emptyCopy[statusFilter];
+
     return (
       <RNView style={styles.emptyStateContainer}>
-        <Text style={styles.emptyStateTitle}>No chores yet</Text>
-        <Text style={styles.emptyStateSubtitle}>
-          Tap the + button to add your first task and get your house running like a well-oiled machine.
-        </Text>
+        <Text style={styles.emptyStateTitle}>{copy.title}</Text>
+        <Text style={styles.emptyStateSubtitle}>{copy.subtitle}</Text>
       </RNView>
     );
   };
@@ -671,7 +702,7 @@ export default function ChoresScreen() {
                     styles.fairnessBarFill,
                     {
                       width: `${widthPercent}%`,
-                      backgroundColor: isCurrentUser ? GREEN_ACCENT : colors.accent,
+                      backgroundColor: isCurrentUser ? colors.success : colors.accent,
                     },
                   ]}
                 />
@@ -718,7 +749,11 @@ export default function ChoresScreen() {
         }}
       >
         <Text style={styles.sortButtonText}>
-          {sortByPointsDesc ? 'Points high' : 'Points low'}
+          {statusFilter === 'history'
+            ? 'Newest'
+            : sortByPointsDesc
+            ? 'Points high'
+            : 'Points low'}
         </Text>
       </TouchableOpacity>
     </RNView>
@@ -943,7 +978,7 @@ export default function ChoresScreen() {
 
   if (!isInHouse) {
     return (
-      <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
+      <ScreenShell>
         <RNView style={styles.centeredMessage}>
           <Text style={styles.title}>Join or create a house</Text>
           <Text style={styles.description}>
@@ -951,24 +986,33 @@ export default function ChoresScreen() {
             chores here.
           </Text>
         </RNView>
-      </View>
+      </ScreenShell>
     );
   }
 
   return (
-    <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
-      <FlatList
+    <ScreenShell style={styles.container}>
+      <Animated.FlatList
         data={filteredAndSortedChores}
         keyExtractor={(item) => item.choreId}
         contentContainerStyle={styles.listContent}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY.current } } }],
+          { useNativeDriver: true }
+        )}
+        scrollEventThrottle={16}
         ListHeaderComponent={
           <RNView>
             <Text style={styles.title}>Chores</Text>
-            <Text style={styles.description}>
-              Keep your home running smoothly by sharing tasks fairly across the house.
-            </Text>
             {renderFairnessBar()}
             {renderFilters()}
+            <Text style={styles.listSubtitle}>
+              {statusFilter === 'active'
+                ? 'Due now and overdue tasks.'
+                : statusFilter === 'upcoming'
+                ? 'Planned chores coming up next.'
+                : 'Completed chores history.'}
+            </Text>
           </RNView>
         }
         renderItem={renderChoreCard}
@@ -982,6 +1026,20 @@ export default function ChoresScreen() {
         <Text style={styles.fabText}>+</Text>
       </TouchableOpacity>
 
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.stickyHeader,
+          {
+            paddingTop: insets.top,
+            height: insets.top + 56,
+            opacity: headerOpacity,
+          },
+        ]}
+      >
+        <Text style={styles.stickyHeaderTitle}>Chores</Text>
+      </Animated.View>
+
       {renderModal()}
 
       {loading && (
@@ -989,7 +1047,7 @@ export default function ChoresScreen() {
           <ActivityIndicator size="large" color={colors.accent} />
         </RNView>
       )}
-    </View>
+    </ScreenShell>
   );
 }
 
@@ -998,8 +1056,8 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    padding: 20,
-    paddingBottom: 96,
+    padding: 24,
+    paddingBottom: 160,
   },
   title: {
     fontSize: 28,
@@ -1007,10 +1065,30 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.accent,
     marginBottom: 8,
   },
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 56,
+    backgroundColor: colors.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stickyHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.accent,
+  },
   description: {
     fontSize: 15,
     color: colors.muted,
     marginBottom: 20,
+  },
+  listSubtitle: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 12,
   },
   centeredMessage: {
     flex: 1,
@@ -1085,7 +1163,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   completeButton: {
     marginTop: 10,
-    backgroundColor: GREEN_ACCENT,
+    backgroundColor: colors.success,
     borderRadius: 999,
     paddingVertical: 10,
     alignItems: 'center',
@@ -1138,7 +1216,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 24,
+    bottom: 112,
     width: 56,
     height: 56,
     borderRadius: 999,
@@ -1312,7 +1390,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     backgroundColor: colors.accent,
   },
   stepDotComplete: {
-    backgroundColor: '#93C5FD',
+    backgroundColor: colors.infoSoft,
   },
   reviewCard: {
     backgroundColor: colors.surface,

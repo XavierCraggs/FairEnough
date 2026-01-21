@@ -1,25 +1,25 @@
 import {
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Alert,
   ActivityIndicator,
-  View as RNView,
+  Alert,
+  Animated,
   Image,
-  Modal,
-  TextInput,
-  KeyboardAvoidingView,
   Keyboard,
-  Platform,
-  TouchableWithoutFeedback,
+  KeyboardAvoidingView,
   Linking,
+  Modal,
+  Platform,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View as RNView,
 } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { router } from 'expo-router';
 import authService, { AuthServiceError } from '@/services/authService';
 import houseService, { HouseData } from '@/services/houseService';
 import { useAuth } from '@/contexts/AuthContext';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import premiumService from '@/services/premiumService';
 import profileService from '@/services/profileService';
@@ -28,6 +28,8 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
 import { useThemePreference } from '@/contexts/ThemeContext';
+import ScreenShell from '@/components/ScreenShell';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const SUPPORT_EMAIL = 'support@sortedapp.app';
 const HELP_CENTER_URL = 'https://sortedapp.app/help';
@@ -39,6 +41,13 @@ export default function SettingsScreen() {
   const houseId = userProfile?.houseId ?? null;
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const scrollY = useRef(new Animated.Value(0));
+  const headerOpacity = scrollY.current.interpolate({
+    inputRange: [0, 80],
+    outputRange: [0, 0.92],
+    extrapolate: 'clamp',
+  });
   const { preference, setPreference } = useThemePreference();
 
   const [loading, setLoading] = useState(false);
@@ -286,8 +295,15 @@ export default function SettingsScreen() {
     : 'Unlock calendar sync, receipt OCR, and advanced analytics for your house.';
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
+    <ScreenShell style={styles.container}>
+      <Animated.ScrollView
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY.current } } }],
+          { useNativeDriver: true }
+        )}
+        scrollEventThrottle={16}
+      >
+        <RNView style={styles.content}>
         <Text style={styles.title}>Settings</Text>
 
         {!houseId && (
@@ -626,8 +642,23 @@ export default function SettingsScreen() {
             </KeyboardAvoidingView>
           </TouchableWithoutFeedback>
         </Modal>
-      </View>
-    </ScrollView>
+        </RNView>
+      </Animated.ScrollView>
+
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.stickyHeader,
+        {
+          paddingTop: insets.top,
+          height: insets.top + 56,
+          opacity: headerOpacity,
+        },
+      ]}
+    >
+      <Text style={styles.stickyHeaderTitle}>Settings</Text>
+    </Animated.View>
+    </ScreenShell>
   );
 }
 
@@ -638,14 +669,29 @@ const createStyles = (colors: AppTheme) =>
   },
   content: {
     flex: 1,
-    padding: 24,
-    backgroundColor: colors.background,
+    padding: 26,
+    backgroundColor: 'transparent',
   },
   title: {
     fontSize: 28,
     fontWeight: '600',
     color: colors.accent,
     marginBottom: 32,
+  },
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 56,
+    backgroundColor: colors.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stickyHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.accent,
   },
   section: {
     backgroundColor: colors.card,

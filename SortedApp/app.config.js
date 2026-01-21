@@ -9,6 +9,14 @@ module.exports = {
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     extra: {
+      eas: {
+        projectId: "861c543b-b1c1-4820-99b1-7eb01b8472ad"
+      },
+      googleWebClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+      googleAndroidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+      googleIosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+      googleExpoClientId: process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID,
+      facebookAppId: process.env.EXPO_PUBLIC_FACEBOOK_APP_ID,
       firebaseApiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
       firebaseAuthDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
       firebaseProjectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,

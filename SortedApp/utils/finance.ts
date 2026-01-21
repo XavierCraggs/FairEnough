@@ -10,6 +10,7 @@ export interface MinimalTransaction {
   payerId: string;
   amount: number;
   splitWith: string[];
+  splitAmounts?: Record<string, number>;
 }
 
 const CURRENCY_EPSILON = 0.005;
@@ -33,10 +34,44 @@ export const calculateSimplifiedDebts = (
       return;
     }
 
-    const share = amount / splitWith.length;
+    let splitValues: Record<string, number> | null = null;
+    if (transaction.splitAmounts) {
+      const totalSplit = splitWith.reduce((sum, memberId) => {
+        const value = Number(transaction.splitAmounts?.[memberId]);
+        if (!Number.isFinite(value)) {
+          return sum;
+        }
+        return sum + value;
+      }, 0);
+
+      if (totalSplit > CURRENCY_EPSILON) {
+        const scale =
+          Math.abs(totalSplit - amount) > CURRENCY_EPSILON
+            ? amount / totalSplit
+            : 1;
+        splitValues = splitWith.reduce<Record<string, number>>((acc, memberId) => {
+          const value = Number(transaction.splitAmounts?.[memberId]);
+          if (!Number.isFinite(value)) {
+            acc[memberId] = 0;
+          } else {
+            acc[memberId] = roundCurrency(value * scale);
+          }
+          return acc;
+        }, {});
+      }
+    }
+
+    if (!splitValues) {
+      const share = amount / splitWith.length;
+      splitValues = splitWith.reduce<Record<string, number>>((acc, memberId) => {
+        acc[memberId] = share;
+        return acc;
+      }, {});
+    }
 
     splitWith.forEach((memberId) => {
       const current = balances.get(memberId) ?? 0;
+      const share = splitValues?.[memberId] ?? 0;
       balances.set(memberId, roundCurrency(current - share));
     });
 

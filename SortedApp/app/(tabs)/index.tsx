@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
+  Animated,
   TouchableOpacity,
   Alert,
   Modal,
@@ -18,8 +19,9 @@ import {
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
-import houseService, { HouseData } from '@/services/houseService';
 import choreService, { ChoreData, ROLLING_WINDOW_DAYS } from '@/services/choreService';
+import financeService, { TransactionData } from '@/services/financeService';
+import calendarService, { CalendarEventData } from '@/services/calendarService';
 import notificationService from '@/services/notificationService';
 import useAlfred from '@/hooks/useAlfred';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
@@ -27,6 +29,8 @@ import { db } from '@/api/firebase';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
+import ScreenShell from '@/components/ScreenShell';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Member {
   userId: string;
@@ -50,17 +54,25 @@ export default function DashboardScreen() {
   const { userProfile, user } = useAuth();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const scrollY = useRef(new Animated.Value(0));
+  const headerOpacity = scrollY.current.interpolate({
+    inputRange: [0, 80],
+    outputRange: [0, 0.92],
+    extrapolate: 'clamp',
+  });
   const userName = userProfile?.name || 'User';
   const houseId = userProfile?.houseId;
   const currentUserId = user?.uid;
 
-  const [houseData, setHouseData] = useState<HouseData | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [fairnessData, setFairnessData] = useState<FairnessData | null>(null);
-  const [loadingHouse, setLoadingHouse] = useState(true);
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [loadingFairness, setLoadingFairness] = useState(true);
   const [loadingChores, setLoadingChores] = useState(true);
+  const [chores, setChores] = useState<ChoreData[]>([]);
+  const [transactions, setTransactions] = useState<TransactionData[]>([]);
+  const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [choreSummary, setChoreSummary] = useState({
     totalOpen: 0,
     assignedToYou: 0,
@@ -82,28 +94,6 @@ export default function DashboardScreen() {
     houseId: houseId ?? null,
     userId: currentUserId ?? null,
   });
-
-  // Fetch house data
-  useEffect(() => {
-    if (!houseId) {
-      setLoadingHouse(false);
-      return;
-    }
-
-    const fetchHouse = async () => {
-      try {
-        const house = await houseService.getHouse(houseId);
-        setHouseData(house);
-      } catch (error) {
-        console.error('Error fetching house:', error);
-        Alert.alert('Error', 'Failed to load house data');
-      } finally {
-        setLoadingHouse(false);
-      }
-    };
-
-    fetchHouse();
-  }, [houseId]);
 
   // Real-time members subscription
   useEffect(() => {
@@ -164,6 +154,61 @@ export default function DashboardScreen() {
     calculateFairness();
   }, [houseId, members]);
 
+  useEffect(() => {
+    if (!houseId) return;
+    const unsubscribe = financeService.subscribeToTransactions(houseId, (updated) => {
+      setTransactions(updated);
+    });
+    return () => unsubscribe();
+  }, [houseId]);
+
+  useEffect(() => {
+    if (!houseId) return;
+    const unsubscribe = calendarService.subscribeToEvents(houseId, (updated) => {
+      setEvents(updated);
+    });
+    return () => unsubscribe();
+  }, [houseId]);
+
+  const startOfDay = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  const getChoreDueDate = (chore: ChoreData, referenceDate: Date) => {
+    if (chore.nextDueAt?.toDate) {
+      return startOfDay(chore.nextDueAt.toDate());
+    }
+    if (chore.frequency === 'one-time') {
+      return chore.status === 'completed' ? null : startOfDay(referenceDate);
+    }
+    if (chore.lastCompletedAt?.toDate) {
+      const lastCompleted = startOfDay(chore.lastCompletedAt.toDate());
+      const daysToAdd = chore.frequency === 'daily' ? 1 : 7;
+      return new Date(
+        lastCompleted.getFullYear(),
+        lastCompleted.getMonth(),
+        lastCompleted.getDate() + daysToAdd
+      );
+    }
+    if (chore.createdAt?.toDate) {
+      return startOfDay(chore.createdAt.toDate());
+    }
+    return startOfDay(referenceDate);
+  };
+
+  const getDueLabel = (dueDate: Date | null) => {
+    if (!dueDate) return 'No due date';
+    const today = startOfDay(new Date());
+    const diffTime = dueDate.getTime() - today.getTime();
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) {
+      const overdueDays = Math.abs(diffDays);
+      return overdueDays === 1 ? 'Overdue by 1 day' : `Overdue by ${overdueDays} days`;
+    }
+    if (diffDays === 0) return 'Due today';
+    if (diffDays === 1) return 'Due tomorrow';
+    return `Due in ${diffDays} days`;
+  };
+
   const isChoreOverdue = (chore: ChoreData) => {
     if (chore.status === 'completed') {
       return false;
@@ -198,6 +243,7 @@ export default function DashboardScreen() {
 
     setLoadingChores(true);
     const unsubscribe = choreService.subscribeToHouseChores(houseId, (chores) => {
+      setChores(chores);
       const openChores = chores.filter((chore) => chore.status !== 'completed');
       const assignedToYou = currentUserId
         ? openChores.filter((chore) => chore.assignedTo === currentUserId).length
@@ -221,8 +267,12 @@ export default function DashboardScreen() {
     router.push('/(tabs)/chores');
   };
 
-  const handleOpenSettings = () => {
-    router.push('/(tabs)/settings');
+  const handleOpenFinance = () => {
+    router.push('/(tabs)/finance');
+  };
+
+  const handleOpenCalendar = () => {
+    router.push('/(tabs)/calendar');
   };
 
   const handleOpenAlfredModal = () => {
@@ -339,6 +389,149 @@ export default function DashboardScreen() {
   const latestNotificationTime = latestNotification
     ? formatNotificationTime(latestNotification.createdAt)
     : null;
+  const userPhotoUrl = userProfile?.photoUrl ?? null;
+
+  const todayLabel = new Date().toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+
+  const nextChoreSummary = useMemo(() => {
+    const today = startOfDay(new Date());
+    const openChores = chores.filter((chore) => chore.status !== 'completed');
+    const withDue = openChores
+      .map((chore) => ({
+        chore,
+        dueDate: getChoreDueDate(chore, today),
+      }))
+      .filter((item) => item.dueDate);
+
+    const active = withDue.filter((item) => item.dueDate! <= today);
+    const upcoming = withDue.filter((item) => item.dueDate! > today);
+
+    const pickFrom = (items: typeof withDue) => {
+      const mine = currentUserId
+        ? items.filter((item) => item.chore.assignedTo === currentUserId)
+        : [];
+      const pool = mine.length ? mine : items;
+      const sorted = [...pool].sort(
+        (a, b) => a.dueDate!.getTime() - b.dueDate!.getTime()
+      );
+      return { item: sorted[0], count: sorted.length - 1, isPersonal: mine.length > 0 };
+    };
+
+    if (active.length) {
+      return { ...pickFrom(active), bucket: 'active' as const };
+    }
+    if (upcoming.length) {
+      return { ...pickFrom(upcoming), bucket: 'upcoming' as const };
+    }
+    return { item: null, count: 0, bucket: 'empty' as const, isPersonal: false };
+  }, [chores, currentUserId]);
+
+  const nextBillSummary = useMemo(() => {
+    const unsettled = transactions.filter((transaction) => {
+      const totalParticipants = transaction.splitWith?.length ?? 0;
+      const confirmedCount = transaction.confirmedBy?.length ?? 0;
+      return totalParticipants > 0 && confirmedCount < totalParticipants;
+    });
+
+    const relevant = unsettled.filter(
+      (transaction) =>
+        transaction.payerId === currentUserId ||
+        (transaction.splitWith || []).includes(currentUserId ?? '')
+    );
+
+    const list = relevant.length ? relevant : unsettled;
+    if (!list.length) {
+      return { transaction: null, count: 0, isPersonal: false };
+    }
+
+    const sorted = [...list].sort((a, b) => {
+      const aDate = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+      const bDate = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+      return aDate - bDate;
+    });
+
+    return {
+      transaction: sorted[0],
+      count: sorted.length - 1,
+      isPersonal: relevant.length > 0,
+    };
+  }, [transactions, currentUserId]);
+
+  const nextEventSummary = useMemo(() => {
+    const today = startOfDay(new Date());
+    const occurrences = events
+      .map((event) => {
+        const baseDate = startOfDay(event.startDate.toDate());
+        const recurrence = event.recurrence || {
+          frequency: 'none',
+          interval: 1,
+          endDate: null,
+        };
+        const interval = Math.max(1, recurrence.interval || 1);
+        const recurrenceEnd = recurrence.endDate?.toDate
+          ? startOfDay(recurrence.endDate.toDate())
+          : null;
+
+        const advance = (date: Date) => {
+          switch (recurrence.frequency) {
+            case 'daily':
+              return new Date(date.getFullYear(), date.getMonth(), date.getDate() + interval);
+            case 'weekly':
+              return new Date(date.getFullYear(), date.getMonth(), date.getDate() + interval * 7);
+            case 'monthly':
+              return new Date(date.getFullYear(), date.getMonth() + interval, date.getDate());
+            case 'yearly':
+              return new Date(date.getFullYear() + interval, date.getMonth(), date.getDate());
+            default:
+              return date;
+          }
+        };
+
+        if (recurrence.frequency === 'none') {
+          return baseDate >= today
+            ? { event, occurrenceDate: baseDate }
+            : null;
+        }
+
+        if (recurrenceEnd && recurrenceEnd < today) {
+          return null;
+        }
+
+        let current = baseDate;
+        while (current < today) {
+          current = advance(current);
+          if (recurrenceEnd && current > recurrenceEnd) {
+            return null;
+          }
+        }
+
+        return { event, occurrenceDate: current };
+      })
+      .filter(Boolean) as Array<{ event: CalendarEventData; occurrenceDate: Date }>;
+
+    const personal = occurrences.filter(
+      (item) => item.event.createdBy === currentUserId
+    );
+    const list = personal.length ? personal : occurrences;
+
+    if (!list.length) {
+      return { item: null, count: 0, isPersonal: false };
+    }
+
+    const sorted = [...list].sort(
+      (a, b) => a.occurrenceDate.getTime() - b.occurrenceDate.getTime()
+    );
+
+    return {
+      item: sorted[0],
+      count: sorted.length - 1,
+      isPersonal: personal.length > 0,
+    };
+  }, [events, currentUserId]);
 
   useEffect(() => {
     if (!houseId || !currentUserId) return;
@@ -355,86 +548,168 @@ export default function DashboardScreen() {
   // No house case
   if (!houseId) {
     return (
-      <ScrollView style={styles.container}>
-        <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
-          <Text style={styles.greeting}>Welcome back, {userName}!</Text>
+      <ScreenShell>
+        <Animated.ScrollView
+          style={styles.container}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY.current } } }],
+            { useNativeDriver: true }
+          )}
+          scrollEventThrottle={16}
+        >
+          <RNView style={styles.content}>
+            <Text style={styles.greeting}>Welcome back, {userName}!</Text>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>No House</Text>
-            <Text style={styles.description}>
-              You're not in a house yet. Join an existing house or create a new one to get started.
-            </Text>
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={() => router.push('/(auth)/house-setup')}
-            >
-              <Text style={styles.primaryButtonText}>Set Up House</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </ScrollView>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>No House</Text>
+              <Text style={styles.description}>
+                You're not in a house yet. Join an existing house or create a new one to get
+                started.
+              </Text>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={() => router.push('/(auth)/house-setup')}
+              >
+                <Text style={styles.primaryButtonText}>Set Up House</Text>
+              </TouchableOpacity>
+            </View>
+          </RNView>
+        </Animated.ScrollView>
+      </ScreenShell>
     );
   }
 
   return (
-    <View style={styles.container} lightColor={colors.background} darkColor={colors.background}>
-      <ScrollView>
-        <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
-        <Text style={styles.greeting}>Welcome back, {userName}!</Text>
-
-        {/* Alfred Briefing */}
-          <View style={styles.alfredCard}>
-            <RNView style={styles.alfredHeader}>
-              <RNView style={styles.alfredTitleRow}>
-                <RNView style={styles.alfredIcon}>
-                <FontAwesome name="user" size={18} color={colors.accent} />
+    <ScreenShell style={styles.container}>
+      <Animated.ScrollView
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY.current } } }],
+          { useNativeDriver: true }
+        )}
+        scrollEventThrottle={16}
+      >
+        <RNView style={styles.content}>
+        <RNView style={styles.headerBlock}>
+          <RNView style={styles.headerRow}>
+            <RNView style={styles.profileRow}>
+              {userPhotoUrl ? (
+                <Image source={{ uri: userPhotoUrl }} style={styles.profileAvatar} />
+              ) : (
+                <RNView style={styles.profileAvatarFallback}>
+                  <Text style={styles.profileAvatarText}>{getInitial(userName)}</Text>
                 </RNView>
-                <Text style={styles.alfredTitle}>Alfred Briefing</Text>
+              )}
+              <RNView>
+                <Text style={styles.headerGreeting}>Welcome back</Text>
+                <Text style={styles.headerName}>{userName}</Text>
+              </RNView>
+            </RNView>
+            <RNView style={styles.headerActions}>
+              <Pressable style={styles.inboxButton} onPress={handleOpenAlfredModal}>
+                <FontAwesome name="bell" size={16} color={colors.accent} />
                 {unreadCount > 0 && (
-                  <RNView style={styles.alfredBadge}>
-                    <Text style={styles.alfredBadgeText}>{unreadCount}</Text>
+                  <RNView style={styles.inboxBadge}>
+                    <Text style={styles.inboxBadgeText}>{unreadCount}</Text>
                   </RNView>
                 )}
-              </RNView>
-              <TouchableOpacity onPress={handleOpenAlfredModal}>
-                <Text style={styles.alfredLink}>See All</Text>
-              </TouchableOpacity>
+              </Pressable>
             </RNView>
-            <Text style={styles.alfredMessage}>
-              {latestNotification?.message || 'No Alfred updates yet. Keep the house humming.'}
-            </Text>
-            {latestNotificationTime && (
-              <Text style={styles.alfredMeta}>Last update: {latestNotificationTime}</Text>
-            )}
-            <RNView style={styles.alfredActionsRow}>
-              <TouchableOpacity
-                style={styles.alfredButton}
-                onPress={() => setNudgeModalVisible(true)}
-              >
-              <Text style={styles.alfredButtonText}>Request Nudge</Text>
-            </TouchableOpacity>
           </RNView>
-        </View>
+          <TouchableOpacity
+            style={styles.nudgeButton}
+            onPress={() => setNudgeModalVisible(true)}
+          >
+            <Text style={styles.nudgeButtonText}>Ask Alfred</Text>
+          </TouchableOpacity>
+        </RNView>
 
-        {/* House Snapshot */}
-        {loadingHouse ? (
-          <View style={styles.section}>
-            <ActivityIndicator size="small" color={colors.accent} />
-          </View>
-        ) : houseData ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>House Snapshot</Text>
-            <Text style={styles.houseName}>{houseData.name}</Text>
-            <Text style={styles.memberCount}>
-              {loadingMembers
-                ? 'Loading members...'
-                : `${members.length} ${members.length === 1 ? 'member' : 'members'}`}
-            </Text>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handleOpenSettings}>
-              <Text style={styles.secondaryButtonText}>Manage house in Settings</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
+        <RNView style={styles.todayCard}>
+          <RNView style={styles.todayHeader}>
+            <Text style={styles.todayTitle}>Today</Text>
+            <Text style={styles.todayDate}>{todayLabel}</Text>
+          </RNView>
+
+          <Pressable style={styles.todayRow} onPress={handleOpenChores}>
+            <RNView>
+              <Text style={styles.todayLabel}>
+                {nextChoreSummary.item
+                  ? nextChoreSummary.isPersonal
+                    ? 'Your next chore'
+                    : 'House chore'
+                  : 'Next chore'}
+              </Text>
+              <Text style={styles.todayValue}>
+                {nextChoreSummary.item
+                  ? nextChoreSummary.item.chore.title
+                  : 'Nothing due today'}
+              </Text>
+              <Text style={styles.todayMeta}>
+                {nextChoreSummary.item
+                  ? getDueLabel(nextChoreSummary.item.dueDate ?? null)
+                  : 'You are all caught up.'}
+              </Text>
+            </RNView>
+            {nextChoreSummary.count > 0 && (
+              <RNView style={styles.todayCountBadge}>
+                <Text style={styles.todayCountText}>+{nextChoreSummary.count}</Text>
+              </RNView>
+            )}
+          </Pressable>
+
+          <Pressable style={styles.todayRow} onPress={handleOpenFinance}>
+            <RNView>
+              <Text style={styles.todayLabel}>
+                {nextBillSummary.transaction
+                  ? nextBillSummary.isPersonal
+                    ? 'Your next bill'
+                    : 'House bill'
+                  : 'Next bill'}
+              </Text>
+              <Text style={styles.todayValue}>
+                {nextBillSummary.transaction
+                  ? nextBillSummary.transaction.description || 'Shared bill'
+                  : 'No open bills'}
+              </Text>
+              <Text style={styles.todayMeta}>
+                {nextBillSummary.transaction
+                  ? `$${Number(nextBillSummary.transaction.amount).toFixed(2)}`
+                  : 'All settled for now.'}
+              </Text>
+            </RNView>
+            {nextBillSummary.count > 0 && (
+              <RNView style={styles.todayCountBadge}>
+                <Text style={styles.todayCountText}>+{nextBillSummary.count}</Text>
+              </RNView>
+            )}
+          </Pressable>
+
+          <Pressable style={styles.todayRow} onPress={handleOpenCalendar}>
+            <RNView>
+              <Text style={styles.todayLabel}>
+                {nextEventSummary.item
+                  ? nextEventSummary.isPersonal
+                    ? 'Your next event'
+                    : 'House event'
+                  : 'Next event'}
+              </Text>
+              <Text style={styles.todayValue}>
+                {nextEventSummary.item
+                  ? nextEventSummary.item.event.title
+                  : 'No upcoming events'}
+              </Text>
+              <Text style={styles.todayMeta}>
+                {nextEventSummary.item
+                  ? nextEventSummary.item.occurrenceDate.toLocaleDateString()
+                  : 'Nothing scheduled yet.'}
+              </Text>
+            </RNView>
+            {nextEventSummary.count > 0 && (
+              <RNView style={styles.todayCountBadge}>
+                <Text style={styles.todayCountText}>+{nextEventSummary.count}</Text>
+              </RNView>
+            )}
+          </Pressable>
+        </RNView>
 
         {/* House Fairness */}
         {loadingFairness ? (
@@ -484,7 +759,7 @@ export default function DashboardScreen() {
                           )} vs avg`;
                           Alert.alert(
                             member.userName,
-                            `${member.totalPoints} pts • ${deviationText}`
+                            `${member.totalPoints} pts | ${deviationText}`
                           );
                         }}
                       >
@@ -590,8 +865,22 @@ export default function DashboardScreen() {
           </View>
         )}
 
-      </View>
-    </ScrollView>
+        </RNView>
+      </Animated.ScrollView>
+
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.stickyHeader,
+          {
+            paddingTop: insets.top,
+            height: insets.top + 56,
+            opacity: headerOpacity,
+          },
+        ]}
+      >
+        <Text style={styles.stickyHeaderTitle}>Dashboard</Text>
+      </Animated.View>
 
     <Modal
       visible={alfredModalVisible}
@@ -695,7 +984,7 @@ export default function DashboardScreen() {
         </KeyboardAvoidingView>
       </TouchableWithoutFeedback>
     </Modal>
-    </View>
+    </ScreenShell>
   );
 }
 
@@ -705,13 +994,172 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 24,
+    padding: 26,
   },
   greeting: {
     fontSize: 28,
     fontWeight: '600',
     color: colors.accent,
     marginBottom: 32,
+  },
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 56,
+    backgroundColor: colors.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stickyHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  headerBlock: {
+    marginBottom: 18,
+  },
+  headerGreeting: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  headerName: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  profileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  profileAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    marginRight: 12,
+  },
+  profileAvatarFallback: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    marginRight: 12,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileAvatarText: {
+    color: colors.accent,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  inboxButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  inboxBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: colors.danger,
+    borderRadius: 999,
+    width: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inboxBadgeText: {
+    color: colors.onAccent,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  nudgeButton: {
+    backgroundColor: colors.accent,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 999,
+    alignItems: 'center',
+    alignSelf: 'stretch',
+  },
+  nudgeButtonText: {
+    color: colors.onAccent,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  todayCard: {
+    backgroundColor: colors.card,
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  todayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  todayTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  todayDate: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  todayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  todayLabel: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  todayValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.accent,
+    marginBottom: 2,
+  },
+  todayMeta: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  todayCountBadge: {
+    backgroundColor: colors.accentSoft,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  todayCountText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.accent,
   },
   alfredCard: {
     backgroundColor: colors.card,
@@ -915,7 +1363,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: colors.border,
   },
   fairnessMemberName: {
     fontSize: 15,
@@ -969,7 +1417,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     marginBottom: 4,
   },
   statValueDanger: {
-    color: '#DC2626',
+    color: colors.danger,
   },
   statLabel: {
     fontSize: 12,
@@ -1089,7 +1537,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     justifyContent: 'center',
   },
   modalActionCancel: {
-    backgroundColor: '#DC2626',
+    backgroundColor: colors.danger,
     marginRight: 12,
   },
   modalActionConfirm: {

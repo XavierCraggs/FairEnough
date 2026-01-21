@@ -7,12 +7,14 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { router } from 'expo-router';
 import authService, { AuthServiceError } from '@/services/authService';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
+import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 export default function RegisterScreen() {
   const colors = useAppTheme();
@@ -83,56 +85,82 @@ export default function RegisterScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
-          <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Sign up to get started</Text>
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <FontAwesome name="chevron-left" size={18} color={colors.accent} />
+          </Pressable>
+
+          <View style={styles.logoCircle}>
+            <FontAwesome name="home" size={22} color={colors.accent} />
+          </View>
+
+          <Text style={styles.title}>Let's get started</Text>
+          <Text style={styles.subtitle}>
+            Create your account to begin organizing your house.
+          </Text>
 
           <View style={styles.form}>
-            <TextInput
-              style={styles.input}
-              placeholder="Full Name"
-              placeholderTextColor={colors.muted}
-              value={name}
-              onChangeText={setName}
-              autoCapitalize="words"
-              autoComplete="name"
-              editable={!loading}
-            />
+            <Text style={styles.inputLabel}>Name</Text>
+            <View style={styles.inputRow}>
+              <FontAwesome name="user" size={16} color={colors.muted} />
+              <TextInput
+                style={styles.input}
+                placeholder="Full Name"
+                placeholderTextColor={colors.muted}
+                value={name}
+                onChangeText={setName}
+                autoCapitalize="words"
+                autoComplete="name"
+                editable={!loading}
+              />
+            </View>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Email"
-              placeholderTextColor={colors.muted}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              autoComplete="email"
-              editable={!loading}
-            />
+            <Text style={styles.inputLabel}>Email</Text>
+            <View style={styles.inputRow}>
+              <FontAwesome name="envelope" size={14} color={colors.muted} />
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                placeholderTextColor={colors.muted}
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                autoComplete="email"
+                editable={!loading}
+              />
+            </View>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              placeholderTextColor={colors.muted}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-              autoComplete="password-new"
-              editable={!loading}
-            />
+            <Text style={styles.inputLabel}>Password</Text>
+            <View style={styles.inputRow}>
+              <FontAwesome name="lock" size={16} color={colors.muted} />
+              <TextInput
+                style={styles.input}
+                placeholder="Password"
+                placeholderTextColor={colors.muted}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                autoComplete="password-new"
+                editable={!loading}
+              />
+            </View>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm Password"
-              placeholderTextColor={colors.muted}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              autoCapitalize="none"
-              autoComplete="password-new"
-              editable={!loading}
-            />
+            <Text style={styles.inputLabel}>Confirm Password</Text>
+            <View style={styles.inputRow}>
+              <FontAwesome name="lock" size={16} color={colors.muted} />
+              <TextInput
+                style={styles.input}
+                placeholder="Confirm Password"
+                placeholderTextColor={colors.muted}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                autoComplete="password-new"
+                editable={!loading}
+              />
+            </View>
 
             {error && <Text style={styles.errorText}>{error}</Text>}
 
@@ -172,37 +200,66 @@ const createStyles = (colors: AppTheme) =>
   content: {
     flex: 1,
     paddingHorizontal: 32,
-    paddingTop: 80,
+    paddingTop: 48,
     paddingBottom: 40,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     backgroundColor: colors.background,
   },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+  },
+  logoCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+  },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '600',
     color: colors.accent,
-    marginBottom: 8,
-    textAlign: 'center',
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: colors.muted,
-    marginBottom: 48,
-    textAlign: 'center',
+    marginBottom: 28,
   },
   form: {
     width: '100%',
   },
-  input: {
+  inputLabel: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 6,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: colors.surface,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: colors.text,
+    paddingVertical: 12,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    color: colors.text,
+    marginLeft: 10,
+    padding: 0,
   },
   errorText: {
     color: colors.danger,
@@ -212,8 +269,8 @@ const createStyles = (colors: AppTheme) =>
   },
   button: {
     backgroundColor: colors.accent,
-    borderRadius: 12,
-    paddingVertical: 16,
+    borderRadius: 999,
+    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
