@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Image,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -41,6 +40,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useLocalSearchParams } from 'expo-router';
 import { getFirstName } from '@/utils/name';
+import { Image } from 'expo-image';
 
 const BORDER_RADIUS = 16;
 const CONTEST_REASONS = [
@@ -1166,6 +1166,9 @@ export default function FinanceScreen() {
               <Image
                 source={{ uri: memberPhotoMap.get(item.payerId) as string }}
                 style={styles.payerAvatarLarge}
+                contentFit="cover"
+                cachePolicy="disk"
+                transition={150}
               />
             ) : (
               <RNView
@@ -1239,7 +1242,13 @@ export default function FinanceScreen() {
                     ]}
                   >
                     {photoUrl ? (
-                      <Image source={{ uri: photoUrl }} style={styles.avatarImage} />
+                      <Image
+                        source={{ uri: photoUrl }}
+                        style={styles.avatarImage}
+                        contentFit="cover"
+                        cachePolicy="disk"
+                        transition={150}
+                      />
                     ) : (
                       <Text style={styles.avatarText}>{getInitial(name)}</Text>
                     )}
@@ -1527,7 +1536,13 @@ export default function FinanceScreen() {
                             style={styles.splitAvatarPress}
                           >
                             {photoUrl ? (
-                              <Image source={{ uri: photoUrl }} style={styles.splitAvatar} />
+                              <Image
+                                source={{ uri: photoUrl }}
+                                style={styles.splitAvatar}
+                                contentFit="cover"
+                                cachePolicy="disk"
+                                transition={150}
+                              />
                             ) : (
                               <RNView
                                 style={[

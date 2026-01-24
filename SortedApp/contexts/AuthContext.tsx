@@ -1,8 +1,9 @@
 // contexts/AuthContext.tsx
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useRouter, useSegments } from 'expo-router';
+import { Alert } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { auth, db } from '../api/firebase';
@@ -61,6 +62,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [initialNavigationDone, setInitialNavigationDone] = useState(false);
+  const missingProfileAlerted = useRef(false);
   
   const router = useRouter();
   const segments = useSegments();
@@ -220,6 +222,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // User is logged out but not on auth screen -> redirect to welcome
       router.replace('/(auth)');
       setInitialNavigationDone(true);
+    } else if (user && userProfile === null) {
+      // User is signed in but profile is missing -> treat as logged out
+      if (!missingProfileAlerted.current) {
+        missingProfileAlerted.current = true;
+        Alert.alert(
+          'Account not found',
+          'We could not load your profile. Please sign in again.'
+        );
+      }
+      if (!inAuthGroup) {
+        router.replace('/(auth)');
+      }
+      setInitialNavigationDone(true);
     } else if (user && userProfile !== null) {
       // User is logged in and profile is loaded
       const hasHouse = userProfile.houseId !== null;
@@ -254,7 +269,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     userProfile,
     loading,
-    isAuthenticated: !!user,
+    isAuthenticated: !!user && !!userProfile,
   };
 
   /**

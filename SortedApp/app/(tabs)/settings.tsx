@@ -2,7 +2,6 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Image,
   Keyboard,
   KeyboardAvoidingView,
   Linking,
@@ -35,6 +34,7 @@ import notificationService from '@/services/notificationService';
 import choreService from '@/services/choreService';
 import financeService from '@/services/financeService';
 import calendarService from '@/services/calendarService';
+import { Image } from 'expo-image';
 
 const SUPPORT_EMAIL = 'support@sortedapp.app';
 const HELP_CENTER_URL = 'https://sortedapp.app/help';
@@ -49,6 +49,7 @@ export default function SettingsScreen() {
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const bottomPadding = insets.bottom + 120;
   const scrollY = useRef(new Animated.Value(0));
   const headerOpacity = scrollY.current.interpolate({
     inputRange: [0, 80],
@@ -396,7 +397,7 @@ export default function SettingsScreen() {
         )}
         scrollEventThrottle={16}
       >
-        <RNView style={styles.content}>
+        <RNView style={[styles.content, { paddingBottom: bottomPadding }]}>
         <Text style={styles.title}>Settings</Text>
 
         {!houseId && (
@@ -440,7 +441,13 @@ export default function SettingsScreen() {
           <RNView style={styles.profileRow}>
             <RNView style={styles.avatarWrapper}>
               {currentPhotoUrl ? (
-                <Image source={{ uri: currentPhotoUrl }} style={styles.avatarImage} />
+                <Image
+                  source={{ uri: currentPhotoUrl }}
+                  style={styles.avatarImage}
+                  contentFit="cover"
+                  cachePolicy="disk"
+                  transition={150}
+                />
               ) : (
                 <RNView style={styles.avatarPlaceholder}>
                   <FontAwesome name="user" size={22} color={colors.accent} />
@@ -714,7 +721,13 @@ export default function SettingsScreen() {
                 <RNView style={styles.profileModalRow}>
                   <RNView style={styles.avatarWrapper}>
                     {currentPhotoUrl ? (
-                      <Image source={{ uri: currentPhotoUrl }} style={styles.avatarImage} />
+                      <Image
+                        source={{ uri: currentPhotoUrl }}
+                        style={styles.avatarImage}
+                        contentFit="cover"
+                        cachePolicy="disk"
+                        transition={150}
+                      />
                     ) : (
                       <RNView style={styles.avatarPlaceholder}>
                         <FontAwesome name="user" size={22} color={colors.accent} />

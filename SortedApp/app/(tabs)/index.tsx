@@ -14,13 +14,13 @@ import {
   TouchableWithoutFeedback,
   View as RNView,
   Pressable,
-  Image,
   AppState,
   AppStateStatus,
 } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
+import { Image } from 'expo-image';
 import choreService, { ChoreData, ROLLING_WINDOW_DAYS } from '@/services/choreService';
 import financeService, { TransactionData } from '@/services/financeService';
 import calendarService, { CalendarEventData } from '@/services/calendarService';
@@ -58,6 +58,7 @@ export default function DashboardScreen() {
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const bottomPadding = insets.bottom + 120;
   const scrollY = useRef(new Animated.Value(0));
   const headerOpacity = scrollY.current.interpolate({
     inputRange: [0, 80],
@@ -636,7 +637,7 @@ export default function DashboardScreen() {
           )}
           scrollEventThrottle={16}
         >
-          <RNView style={styles.content}>
+          <RNView style={[styles.content, { paddingBottom: bottomPadding }]}>
             <Text style={styles.greeting}>Welcome back, {userName}!</Text>
 
             <View style={styles.section}>
@@ -667,13 +668,19 @@ export default function DashboardScreen() {
         )}
         scrollEventThrottle={16}
       >
-        <RNView style={styles.content}>
+        <RNView style={[styles.content, { paddingBottom: bottomPadding }]}>
         <RNView style={styles.headerBlock}>
           <RNView style={styles.headerRow}>
             <RNView style={styles.profileRow}>
               <Pressable onPress={() => router.push('/(tabs)/settings')}>
                 {userPhotoUrl ? (
-                  <Image source={{ uri: userPhotoUrl }} style={styles.profileAvatar} />
+                  <Image
+                    source={{ uri: userPhotoUrl }}
+                    style={styles.profileAvatar}
+                    contentFit="cover"
+                    cachePolicy="disk"
+                    transition={150}
+                  />
                 ) : (
                   <RNView style={styles.profileAvatarFallback}>
                     <Text style={styles.profileAvatarText}>{getInitial(userName)}</Text>
@@ -845,7 +852,13 @@ export default function DashboardScreen() {
                         }}
                       >
                         {photoUrl ? (
-                          <Image source={{ uri: photoUrl }} style={styles.fairnessAvatar} />
+                          <Image
+                            source={{ uri: photoUrl }}
+                            style={styles.fairnessAvatar}
+                            contentFit="cover"
+                            cachePolicy="disk"
+                            transition={150}
+                          />
                         ) : (
                           <RNView
                             style={[

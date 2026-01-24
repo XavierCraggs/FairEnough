@@ -39,6 +39,8 @@ import { AppTheme } from '@/constants/AppColors';
 import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFirstName } from '@/utils/name';
+import notificationService from '@/services/notificationService';
+import { Image } from 'expo-image';
 
 const BORDER_RADIUS = 16;
 
@@ -48,6 +50,7 @@ type StatusFilter = 'active' | 'upcoming' | 'history';
 interface MemberOption {
   userId: string;
   name: string;
+  photoUrl?: string | null;
 }
 
 interface FairnessMemberStat {
@@ -56,6 +59,10 @@ interface FairnessMemberStat {
   totalPoints: number;
   deviation: number;
 }
+
+type ChoreListItem =
+  | { type: 'header'; title: string }
+  | { type: 'chore'; chore: ChoreData };
 
 const FREQUENCY_OPTIONS: { label: string; value: FrequencyOption }[] = [
   { label: 'Daily', value: 'daily' },
@@ -71,6 +78,9 @@ const STATUS_FILTERS: { label: string; value: StatusFilter }[] = [
 
 const startOfDay = (date: Date) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const addDays = (date: Date, days: number) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 
 const getDueDate = (chore: ChoreData, referenceDate: Date) => {
   if (chore.nextDueAt?.toDate) {
@@ -120,6 +130,7 @@ export default function ChoresScreen() {
     extrapolate: 'clamp',
   });
   const houseId = userProfile?.houseId ?? null;
+  const currentUserId = user?.uid ?? null;
 
   const [chores, setChores] = useState<ChoreData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -136,6 +147,8 @@ export default function ChoresScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
   const [sortByPointsDesc, setSortByPointsDesc] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [densityMode, setDensityMode] = useState<'comfortable' | 'compact'>('comfortable');
+  const [nudgeSending, setNudgeSending] = useState(false);
 
   // Modal state
   const [modalVisible, setModalVisible] = useState(false);
@@ -217,6 +230,7 @@ export default function ChoresScreen() {
           return {
             userId: doc.id,
             name: getFirstName(data.name || 'Unnamed', 'Unnamed'),
+            photoUrl: data.photoUrl || data.photoURL || null,
           };
         });
         setMembers(loadedMembers);
@@ -478,6 +492,157 @@ export default function ChoresScreen() {
     return getFirstName(member?.name ?? 'Unassigned', 'Unassigned');
   };
 
+  const getFallbackColor = (userId: string) => {
+    const palette = [colors.accent, colors.accentMuted, colors.success, colors.warning];
+    let hash = 0;
+    for (let i = 0; i < userId.length; i += 1) {
+      hash = (hash * 31 + userId.charCodeAt(i)) % palette.length;
+    }
+    return palette[hash];
+  };
+
+  const getInitial = (name: string) => (name.trim() ? name.trim()[0].toUpperCase() : '?');
+
+  const sortedFairnessStats = useMemo(() => {
+    if (!memberStats.length) {
+      return [];
+    }
+    return [...memberStats].sort((a, b) => b.totalPoints - a.totalPoints);
+  }, [memberStats]);
+
+  const memberPhotoMap = useMemo(() => {
+    const map = new Map<string, string | null>();
+    members.forEach((member) => {
+      map.set(member.userId, member.photoUrl ?? null);
+    });
+    return map;
+  }, [members]);
+
+  const fairnessRange = useMemo(() => {
+    if (!memberStats.length) {
+      return null;
+    }
+    const points = memberStats.map((stat) => stat.totalPoints);
+    const average = averagePoints ?? points.reduce((sum, value) => sum + value, 0) / points.length;
+    const minPoints = Math.min(...points, average);
+    const maxPoints = Math.max(...points, average);
+    const spread = Math.max(1, maxPoints - minPoints);
+    const padding = Math.max(3, spread * 0.2);
+    return {
+      min: minPoints - padding,
+      max: maxPoints + padding,
+      average,
+    };
+  }, [memberStats, averagePoints]);
+
+  const getFairnessPosition = (points: number) => {
+    if (!fairnessRange) return 0.5;
+    const range = fairnessRange.max - fairnessRange.min;
+    if (range <= 0) return 0.5;
+    const clamped = Math.min(fairnessRange.max, Math.max(fairnessRange.min, points));
+    return (clamped - fairnessRange.min) / range;
+  };
+
+  const nextChoreSummary = useMemo(() => {
+    const today = startOfDay(new Date());
+    const openChores = chores.filter((chore) => chore.status !== 'completed');
+    const withDue = openChores
+      .map((chore) => {
+        const dueDate = getDueDate(chore, today);
+        return dueDate ? { chore, dueDate } : null;
+      })
+      .filter(Boolean) as Array<{ chore: ChoreData; dueDate: Date }>;
+
+    if (!withDue.length) {
+      return {
+        chore: null,
+        dueDate: null,
+        dueLabel: null,
+        isPersonal: false,
+        assignedName: null,
+      };
+    }
+
+    const personal = currentUserId
+      ? withDue.filter((item) => item.chore.assignedTo === currentUserId)
+      : [];
+
+    const pickSoonest = (items: Array<{ chore: ChoreData; dueDate: Date }>) =>
+      [...items].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())[0];
+
+    const picked = personal.length ? pickSoonest(personal) : pickSoonest(withDue);
+    const dueLabel = getDueLabel(picked?.dueDate ?? null);
+
+    return {
+      chore: picked?.chore ?? null,
+      dueDate: picked?.dueDate ?? null,
+      dueLabel,
+      isPersonal: !!currentUserId && picked?.chore?.assignedTo === currentUserId,
+      assignedName: getAssignedName(picked?.chore?.assignedTo ?? null),
+    };
+  }, [chores, currentUserId, getAssignedName]);
+
+  const groupedItems = useMemo(() => {
+    if (!filteredAndSortedChores.length) {
+      return [] as ChoreListItem[];
+    }
+
+    if (statusFilter === 'history') {
+      return filteredAndSortedChores.map((chore) => ({ type: 'chore', chore }));
+    }
+
+    const today = startOfDay(new Date());
+    const upcomingCutoff = addDays(today, 7);
+
+    const buildGroups = (groups: Array<{ title: string; test: (date: Date) => boolean }>) => {
+      const list: ChoreListItem[] = [];
+      groups.forEach((group) => {
+        const choresForGroup = filteredAndSortedChores.filter((chore) => {
+          const dueDate = getDueDate(chore, today);
+          return !!dueDate && group.test(dueDate);
+        });
+        if (choresForGroup.length) {
+          list.push({ type: 'header', title: group.title });
+          choresForGroup.forEach((chore) => list.push({ type: 'chore', chore }));
+        }
+      });
+      return list;
+    };
+
+    if (statusFilter === 'active') {
+      return buildGroups([
+        { title: 'Overdue', test: (date) => date.getTime() < today.getTime() },
+        { title: 'Due today', test: (date) => date.getTime() === today.getTime() },
+      ]);
+    }
+
+    return buildGroups([
+      { title: 'Today', test: (date) => date.getTime() === today.getTime() },
+      { title: 'This week', test: (date) => date > today && date <= upcomingCutoff },
+      { title: 'Later', test: (date) => date > upcomingCutoff },
+    ]);
+  }, [filteredAndSortedChores, statusFilter]);
+
+  const handleSendNudge = async (chore: ChoreData, dueDate: Date) => {
+    if (!houseId || !currentUserId) return;
+    if (nudgeSending) return;
+    setNudgeSending(true);
+    try {
+      const today = startOfDay(new Date());
+      const action = dueDate.getTime() < today.getTime() ? 'overdue' : 'due';
+      await notificationService.sendAlfredNudge(houseId, currentUserId, 'CHORE_DUE', {
+        choreName: chore.title,
+        action,
+        assignedTo: chore.assignedTo ?? null,
+      });
+      Alert.alert('Alfred', 'Nudge sent.');
+    } catch (error: any) {
+      Alert.alert('Chores', error?.message || 'Unable to send nudge right now.');
+    } finally {
+      setNudgeSending(false);
+    }
+  };
+
   const renderStatusBadge = (chore: ChoreData) => {
     const today = startOfDay(new Date());
     const dueDate = getDueDate(chore, today);
@@ -523,21 +688,38 @@ export default function ChoresScreen() {
     );
   };
 
-  const renderChoreCard = ({ item }: { item: ChoreData }) => {
+  const renderChoreCard = (item: ChoreData) => {
     const isPending = item.status === 'pending' || item.status === 'overdue';
     const assignedName = getAssignedName(item.assignedTo);
     const dueDate = getDueDate(item, startOfDay(new Date()));
     const dueLabel = getDueLabel(dueDate);
+    const today = startOfDay(new Date());
+    const canNudge =
+      !!currentUserId &&
+      !!dueDate &&
+      dueDate.getTime() <= today.getTime() &&
+      !!item.assignedTo &&
+      item.assignedTo !== currentUserId;
     const canComplete =
-      isPending && (item.assignedTo === null || item.assignedTo === user?.uid);
+      isPending && (item.assignedTo === null || item.assignedTo === currentUserId);
+    const isCompact = densityMode === 'compact';
 
     return (
-      <View style={styles.choreCard}>
-        <RNView style={styles.choreHeaderRow}>
+      <View style={[styles.choreCard, isCompact && styles.choreCardCompact]}>
+        <RNView style={[styles.choreHeaderRow, isCompact && styles.choreHeaderRowCompact]}>
           <RNView style={{ flex: 1 }}>
-            <Text style={styles.choreTitle}>{item.title}</Text>
+            <Text style={[styles.choreTitle, isCompact && styles.choreTitleCompact]}>
+              {item.title}
+            </Text>
             {!!item.description && (
-              <Text style={styles.choreDescription}>{item.description}</Text>
+              <Text
+                style={[
+                  styles.choreDescription,
+                  isCompact && styles.choreDescriptionCompact,
+                ]}
+              >
+                {item.description}
+              </Text>
             )}
           </RNView>
           <RNView style={styles.choreHeaderRight}>
@@ -556,17 +738,43 @@ export default function ChoresScreen() {
         </RNView>
 
         <RNView style={styles.choreMetaRow}>
-          <Text style={styles.choreMetaText}>{item.points}/10 difficulty</Text>
+          <Text style={[styles.choreMetaText, isCompact && styles.choreMetaTextCompact]}>
+            {item.points}/10 difficulty
+          </Text>
           <Text style={styles.choreMetaDivider}>|</Text>
-          <Text style={styles.choreMetaText}>Assigned to {assignedName}</Text>
+          <Text style={[styles.choreMetaText, isCompact && styles.choreMetaTextCompact]}>
+            Assigned to {assignedName}
+          </Text>
         </RNView>
-        {dueLabel && <Text style={styles.choreDueText}>{dueLabel}</Text>}
+        {dueLabel && (
+          <Text style={[styles.choreDueText, isCompact && styles.choreDueTextCompact]}>
+            {dueLabel}
+          </Text>
+        )}
 
         {renderLastCompleted(item)}
 
+        {canNudge && (
+          <TouchableOpacity
+            style={[styles.nudgeInlineButton, nudgeSending && styles.buttonDisabled]}
+            onPress={() => {
+              if (dueDate) {
+                handleSendNudge(item, dueDate);
+              }
+            }}
+            disabled={nudgeSending}
+          >
+            {nudgeSending ? (
+              <ActivityIndicator color={colors.onAccent} />
+            ) : (
+              <Text style={styles.nudgeInlineText}>Send nudge</Text>
+            )}
+          </TouchableOpacity>
+        )}
+
         {canComplete && (
           <TouchableOpacity
-            style={styles.completeButton}
+            style={[styles.completeButton, isCompact && styles.completeButtonCompact]}
             onPress={() => handleCompleteChore(item)}
           >
             <Text style={styles.completeButtonText}>Complete</Text>
@@ -643,6 +851,9 @@ export default function ChoresScreen() {
       <RNView style={styles.emptyStateContainer}>
         <Text style={styles.emptyStateTitle}>{copy.title}</Text>
         <Text style={styles.emptyStateSubtitle}>{copy.subtitle}</Text>
+        <TouchableOpacity style={styles.emptyStateButton} onPress={openCreateModal}>
+          <Text style={styles.emptyStateButtonText}>Add a chore</Text>
+        </TouchableOpacity>
       </RNView>
     );
   };
@@ -659,15 +870,9 @@ export default function ChoresScreen() {
       );
     }
 
-    if (!memberStats.length) {
+    if (!sortedFairnessStats.length || !fairnessRange) {
       return null;
     }
-
-    const maxPoints = Math.max(
-      ...memberStats.map((m) => m.totalPoints),
-      averagePoints ?? 0,
-      1
-    );
 
     return (
       <RNView style={styles.fairnessContainer}>
@@ -679,51 +884,104 @@ export default function ChoresScreen() {
           </Text>
         )}
 
-        {memberStats.map((member) => {
-          const widthPercent = (member.totalPoints / maxPoints) * 100;
-          const isCurrentUser = member.userId === user?.uid;
-          return (
-            <RNView key={member.userId} style={styles.fairnessRow}>
-              <RNView style={styles.fairnessLabelColumn}>
-                <Text
-                  style={[
-                    styles.fairnessMemberName,
-                    isCurrentUser && styles.fairnessCurrentUserName,
-                  ]}
-                >
-                  {getFirstName(member.userName, 'User')}
-                </Text>
-                <Text style={styles.fairnessPointsText}>
-                  {member.totalPoints} pts
-                </Text>
-              </RNView>
-              <RNView style={styles.fairnessBarTrack}>
-                <RNView
-                  style={[
-                    styles.fairnessBarFill,
-                    {
-                      width: `${widthPercent}%`,
-                      backgroundColor: isCurrentUser ? colors.success : colors.accent,
-                    },
-                  ]}
-                />
-              </RNView>
-            </RNView>
-          );
-        })}
+        <RNView style={styles.fairnessScale}>
+          <RNView style={styles.fairnessTrack} />
+          <RNView
+            style={[
+              styles.fairnessAverageMarker,
+              { left: `${getFairnessPosition(fairnessRange.average) * 100}%` },
+            ]}
+          />
+          {sortedFairnessStats.map((member) => {
+            const position = getFairnessPosition(member.totalPoints) * 100;
+            const isCurrentUser = member.userId === currentUserId;
+            const dotStyle = isCurrentUser
+              ? styles.fairnessDotCurrent
+              : member.deviation >= 0
+              ? styles.fairnessDotPositive
+              : styles.fairnessDotNegative;
+            const photoUrl = memberPhotoMap.get(member.userId) ?? null;
+            const fallbackColor = getFallbackColor(member.userId);
+            const deviationLabel = `${member.deviation >= 0 ? '+' : ''}${Math.round(
+              member.deviation
+            )} vs avg`;
+            return (
+              <Pressable
+                key={member.userId}
+                style={[styles.fairnessDot, dotStyle, { left: `${position}%` }]}
+                onPress={() => {
+                  Alert.alert(
+                    member.userName,
+                    `${member.totalPoints} pts - ${deviationLabel}`
+                  );
+                }}
+              >
+                {photoUrl ? (
+                  <Image
+                    source={{ uri: photoUrl }}
+                    style={styles.fairnessAvatar}
+                    contentFit="cover"
+                    cachePolicy="disk"
+                    transition={150}
+                  />
+                ) : (
+                  <RNView
+                    style={[styles.fairnessAvatar, { backgroundColor: fallbackColor }]}
+                  >
+                    <Text style={styles.fairnessAvatarText}>
+                      {getInitial(member.userName)}
+                    </Text>
+                  </RNView>
+                )}
+              </Pressable>
+            );
+          })}
+        </RNView>
+        <RNView style={styles.fairnessLegend}>
+          <Text style={styles.fairnessLegendText}>Behind</Text>
+          <Text style={styles.fairnessLegendText}>Ahead</Text>
+        </RNView>
+      </RNView>
+    );
+  };
+
+  const renderNextChoreCard = () => {
+    const { chore, dueLabel, isPersonal, assignedName } = nextChoreSummary;
+    const heading = chore ? (isPersonal ? 'Your next chore' : 'House next chore') : 'Next chore';
+
+    return (
+      <RNView style={styles.nextChoreCard}>
+        <RNView style={styles.nextChoreHeader}>
+          <Text style={styles.sectionTitle}>{heading}</Text>
+        </RNView>
+        {chore ? (
+          <>
+            <Text style={styles.nextChoreTitle}>{chore.title}</Text>
+            {dueLabel && <Text style={styles.nextChoreMeta}>{dueLabel}</Text>}
+            <Text style={styles.nextChoreMeta}>
+              {chore.assignedTo
+                ? isPersonal
+                  ? 'Assigned to you'
+                  : `Assigned to ${assignedName || 'Unassigned'}`
+                : 'Unassigned'}
+            </Text>
+          </>
+        ) : (
+          <Text style={styles.nextChoreEmpty}>No chores assigned right now.</Text>
+        )}
       </RNView>
     );
   };
 
   const renderFilters = () => (
-    <RNView style={styles.filterRow}>
-      <RNView style={styles.filterChipsContainer}>
+    <RNView style={styles.controlsContainer}>
+      <RNView style={styles.toggleRow}>
         {STATUS_FILTERS.map((filter) => (
-          <TouchableOpacity
+          <Pressable
             key={filter.value}
             style={[
-              styles.filterChip,
-              statusFilter === filter.value && styles.filterChipActive,
+              styles.toggleButton,
+              statusFilter === filter.value && styles.toggleButtonActive,
             ]}
             onPress={() => {
               selectionChanged();
@@ -732,31 +990,73 @@ export default function ChoresScreen() {
           >
             <Text
               style={[
-                styles.filterChipText,
-                statusFilter === filter.value && styles.filterChipTextActive,
+                styles.toggleButtonText,
+                statusFilter === filter.value && styles.toggleButtonTextActive,
               ]}
             >
               {filter.label}
             </Text>
-          </TouchableOpacity>
+          </Pressable>
         ))}
       </RNView>
 
-      <TouchableOpacity
-        style={styles.sortButton}
-        onPress={() => {
-          selectionChanged();
-          setSortByPointsDesc((prev) => !prev);
-        }}
-      >
-        <Text style={styles.sortButtonText}>
-          {statusFilter === 'history'
-            ? 'Newest'
-            : sortByPointsDesc
-            ? 'Points high'
-            : 'Points low'}
-        </Text>
-      </TouchableOpacity>
+      <RNView style={styles.filterActionsRow}>
+        <TouchableOpacity
+          style={styles.sortButton}
+          onPress={() => {
+            selectionChanged();
+            setSortByPointsDesc((prev) => !prev);
+          }}
+        >
+          <Text style={styles.sortButtonText}>
+            {statusFilter === 'history'
+              ? 'Newest'
+              : sortByPointsDesc
+              ? 'Points high'
+              : 'Points low'}
+          </Text>
+        </TouchableOpacity>
+        <RNView style={styles.densityToggle}>
+          <Pressable
+            style={[
+              styles.densityOption,
+              densityMode === 'comfortable' && styles.densityOptionActive,
+            ]}
+            onPress={() => {
+              selectionChanged();
+              setDensityMode('comfortable');
+            }}
+          >
+            <Text
+              style={[
+                styles.densityOptionText,
+                densityMode === 'comfortable' && styles.densityOptionTextActive,
+              ]}
+            >
+              Comfortable
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[
+              styles.densityOption,
+              densityMode === 'compact' && styles.densityOptionActive,
+            ]}
+            onPress={() => {
+              selectionChanged();
+              setDensityMode('compact');
+            }}
+          >
+            <Text
+              style={[
+                styles.densityOptionText,
+                densityMode === 'compact' && styles.densityOptionTextActive,
+              ]}
+            >
+              Compact
+            </Text>
+          </Pressable>
+        </RNView>
+      </RNView>
     </RNView>
   );
 
@@ -994,8 +1294,10 @@ export default function ChoresScreen() {
   return (
     <ScreenShell style={styles.container}>
       <Animated.FlatList
-        data={filteredAndSortedChores}
-        keyExtractor={(item) => item.choreId}
+        data={groupedItems}
+        keyExtractor={(item) =>
+          item.type === 'header' ? `header-${item.title}` : `chore-${item.chore.choreId}`
+        }
         contentContainerStyle={styles.listContent}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY.current } } }],
@@ -1005,6 +1307,7 @@ export default function ChoresScreen() {
         ListHeaderComponent={
           <RNView>
             <Text style={styles.title}>Chores</Text>
+            {renderNextChoreCard()}
             {renderFairnessBar()}
             {renderFilters()}
             <Text style={styles.listSubtitle}>
@@ -1016,7 +1319,15 @@ export default function ChoresScreen() {
             </Text>
           </RNView>
         }
-        renderItem={renderChoreCard}
+        renderItem={({ item }) =>
+          item.type === 'header' ? (
+            <RNView style={styles.groupHeader}>
+              <Text style={styles.groupHeaderText}>{item.title}</Text>
+            </RNView>
+          ) : (
+            renderChoreCard(item.chore)
+          )
+        }
         ListEmptyComponent={renderEmptyState}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
@@ -1108,10 +1419,17 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
+  choreCardCompact: {
+    padding: 12,
+    marginBottom: 8,
+  },
   choreHeaderRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     marginBottom: 8,
+  },
+  choreHeaderRowCompact: {
+    marginBottom: 6,
   },
   choreHeaderRight: {
     alignItems: 'flex-end',
@@ -1123,9 +1441,15 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.accent,
     marginBottom: 4,
   },
+  choreTitleCompact: {
+    fontSize: 15,
+  },
   choreDescription: {
     fontSize: 14,
     color: colors.muted,
+  },
+  choreDescriptionCompact: {
+    fontSize: 12,
   },
   choreMetaRow: {
     flexDirection: 'row',
@@ -1136,6 +1460,9 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   choreMetaText: {
     fontSize: 13,
     color: colors.muted,
+  },
+  choreMetaTextCompact: {
+    fontSize: 12,
   },
   choreMetaDivider: {
     fontSize: 13,
@@ -1151,6 +1478,9 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontSize: 12,
     color: colors.muted,
     marginTop: 4,
+  },
+  choreDueTextCompact: {
+    fontSize: 11,
   },
   statusBadge: {
     borderRadius: 999,
@@ -1170,10 +1500,27 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  completeButtonCompact: {
+    marginTop: 8,
+    paddingVertical: 8,
+  },
   completeButtonText: {
     color: colors.onAccent,
     fontWeight: '600',
     fontSize: 15,
+  },
+  nudgeInlineButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.accent,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  nudgeInlineText: {
+    color: colors.onAccent,
+    fontWeight: '600',
+    fontSize: 13,
   },
   menuButton: {
     paddingHorizontal: 6,
@@ -1214,6 +1561,29 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 16,
   },
+  emptyStateButton: {
+    marginTop: 16,
+    backgroundColor: colors.accent,
+    borderRadius: 999,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  emptyStateButtonText: {
+    color: colors.onAccent,
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  groupHeader: {
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  groupHeaderText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
   fab: {
     position: 'absolute',
     right: 20,
@@ -1248,6 +1618,38 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  nextChoreCard: {
+    backgroundColor: colors.card,
+    borderRadius: BORDER_RADIUS,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  nextChoreHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  nextChoreTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.accent,
+    marginBottom: 6,
+  },
+  nextChoreMeta: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  nextChoreEmpty: {
+    fontSize: 13,
+    color: colors.muted,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
@@ -1259,62 +1661,109 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.muted,
     marginBottom: 8,
   },
-  fairnessRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
+  fairnessScale: {
+    height: 46,
+    justifyContent: 'center',
+    marginBottom: 8,
   },
-  fairnessLabelColumn: {
-    width: 120,
-  },
-  fairnessMemberName: {
-    fontSize: 13,
-    color: colors.accent,
-  },
-  fairnessCurrentUserName: {
-    fontWeight: '700',
-  },
-  fairnessPointsText: {
-    fontSize: 12,
-    color: colors.muted,
-  },
-  fairnessBarTrack: {
-    flex: 1,
-    height: 8,
+  fairnessTrack: {
+    height: 6,
     borderRadius: 999,
     backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  fairnessAverageMarker: {
+    position: 'absolute',
+    width: 2,
+    height: 18,
+    backgroundColor: colors.accent,
+    top: 14,
+  },
+  fairnessDot: {
+    position: 'absolute',
+    top: 6,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: -13,
+  },
+  fairnessDotPositive: {
+    borderWidth: 2,
+    borderColor: colors.success,
+    backgroundColor: colors.card,
+  },
+  fairnessDotNegative: {
+    borderWidth: 2,
+    borderColor: colors.danger,
+    backgroundColor: colors.card,
+  },
+  fairnessDotCurrent: {
+    borderWidth: 2,
+    borderColor: colors.accent,
+    backgroundColor: colors.card,
+  },
+  fairnessAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
     overflow: 'hidden',
   },
-  fairnessBarFill: {
-    height: '100%',
-    borderRadius: 999,
+  fairnessAvatarText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.onAccent,
   },
-  filterRow: {
+  fairnessLegend: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
   },
-  filterChipsContainer: {
-    flexDirection: 'row',
-  },
-  filterChip: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    backgroundColor: colors.accentSoft,
-    marginRight: 8,
-  },
-  filterChipActive: {
-    backgroundColor: colors.accent,
-  },
-  filterChipText: {
-    fontSize: 13,
+  fairnessLegendText: {
+    fontSize: 11,
     color: colors.muted,
   },
-  filterChipTextActive: {
-    color: colors.onAccent,
+  controlsContainer: {
+    marginBottom: 12,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderRadius: 999,
+    padding: 4,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  toggleButton: {
+    flex: 1,
+    borderRadius: 999,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  toggleButtonActive: {
+    backgroundColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  toggleButtonText: {
+    fontSize: 13,
+    color: colors.muted,
     fontWeight: '600',
+  },
+  toggleButtonTextActive: {
+    color: colors.onAccent,
+  },
+  filterActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   sortButton: {
     borderRadius: 999,
@@ -1326,6 +1775,30 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontSize: 13,
     color: colors.accent,
     fontWeight: '500',
+  },
+  densityToggle: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderRadius: 999,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  densityOption: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  densityOptionActive: {
+    backgroundColor: colors.accent,
+  },
+  densityOptionText: {
+    fontSize: 12,
+    color: colors.muted,
+    fontWeight: '600',
+  },
+  densityOptionTextActive: {
+    color: colors.onAccent,
   },
   modalBackdrop: {
     flex: 1,

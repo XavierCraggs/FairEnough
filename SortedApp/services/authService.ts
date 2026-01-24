@@ -387,6 +387,7 @@
           
           case 'auth/user-not-found':
           case 'auth/wrong-password':
+          case 'auth/invalid-credential':
             return {
               code: authError.code,
               message: 'Invalid email or password. Please try again.',

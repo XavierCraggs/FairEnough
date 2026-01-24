@@ -27,6 +27,7 @@ export default function AuthWelcomeScreen() {
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [authLoading, setAuthLoading] = useState(false);
+  const [authProvider, setAuthProvider] = useState<'apple' | 'google' | 'facebook' | null>(null);
   const [appleAvailable, setAppleAvailable] = useState(false);
   const googleWebClientId = Constants.expoConfig?.extra?.googleWebClientId ?? '';
   const googleAndroidClientId =
@@ -69,6 +70,7 @@ export default function AuthWelcomeScreen() {
       }
 
       try {
+        setAuthProvider('google');
         setAuthLoading(true);
         await authService.signInWithGoogle(idToken);
       } catch (err) {
@@ -76,6 +78,7 @@ export default function AuthWelcomeScreen() {
         Alert.alert('Sorted', authError.message);
       } finally {
         setAuthLoading(false);
+        setAuthProvider(null);
       }
     };
 
@@ -92,6 +95,7 @@ export default function AuthWelcomeScreen() {
       }
 
       try {
+        setAuthProvider('facebook');
         setAuthLoading(true);
         await authService.signInWithFacebook(accessToken);
       } catch (err) {
@@ -99,6 +103,7 @@ export default function AuthWelcomeScreen() {
         Alert.alert('Sorted', authError.message);
       } finally {
         setAuthLoading(false);
+        setAuthProvider(null);
       }
     };
 
@@ -134,6 +139,7 @@ export default function AuthWelcomeScreen() {
     }
 
     try {
+      setAuthProvider('apple');
       setAuthLoading(true);
       const rawNonce = createNonce();
       const hashedNonce = await Crypto.digestStringAsync(
@@ -163,6 +169,7 @@ export default function AuthWelcomeScreen() {
       Alert.alert('Sorted', authError?.message || 'Apple sign-in failed.');
     } finally {
       setAuthLoading(false);
+      setAuthProvider(null);
     }
   };
 
@@ -190,6 +197,7 @@ export default function AuthWelcomeScreen() {
       Alert.alert('Sorted', 'Google sign-in is unavailable right now.');
       return;
     }
+    setAuthProvider('google');
     await googlePromptAsync({ useProxy: isExpoGo });
   };
 
@@ -202,6 +210,7 @@ export default function AuthWelcomeScreen() {
       Alert.alert('Sorted', 'Facebook sign-in is unavailable right now.');
       return;
     }
+    setAuthProvider('facebook');
     await facebookPromptAsync({ useProxy: false });
   };
 
@@ -223,8 +232,14 @@ export default function AuthWelcomeScreen() {
             onPress={handleApplePress}
             disabled={authLoading}
           >
-            <FontAwesome name="apple" size={18} color={colors.accent} />
-            <Text style={styles.socialText}>Continue with Apple</Text>
+            {authLoading && authProvider === 'apple' ? (
+              <ActivityIndicator color={colors.accent} />
+            ) : (
+              <>
+                <FontAwesome name="apple" size={18} color={colors.accent} />
+                <Text style={styles.socialText}>Continue with Apple</Text>
+              </>
+            )}
           </TouchableOpacity>
         )}
         <TouchableOpacity
@@ -232,7 +247,7 @@ export default function AuthWelcomeScreen() {
           onPress={handleGooglePress}
           disabled={authLoading}
         >
-          {authLoading ? (
+          {authLoading && authProvider === 'google' ? (
             <ActivityIndicator color={colors.accent} />
           ) : (
             <>
@@ -246,8 +261,14 @@ export default function AuthWelcomeScreen() {
           onPress={handleFacebookPress}
           disabled={authLoading}
         >
-          <FontAwesome name="facebook" size={18} color={colors.accent} />
-          <Text style={styles.socialText}>Continue with Facebook</Text>
+          {authLoading && authProvider === 'facebook' ? (
+            <ActivityIndicator color={colors.accent} />
+          ) : (
+            <>
+              <FontAwesome name="facebook" size={18} color={colors.accent} />
+              <Text style={styles.socialText}>Continue with Facebook</Text>
+            </>
+          )}
         </TouchableOpacity>
       </View>
 

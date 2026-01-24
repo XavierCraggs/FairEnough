@@ -15,10 +15,11 @@ export default function ScreenShell({ children, style }: ScreenShellProps) {
 
   return (
     <LinearGradient
-      colors={[colors.background, colors.panel]}
+      colors={[colors.background, colors.accentSoft, colors.accentMuted, colors.panel]}
       style={styles.gradient}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
+      start={{ x: 0.05, y: 0.15 }}
+      end={{ x: 0.95, y: 0.85 }}
+      locations={[0, 0.4, 0.75, 1]}
     >
       <View style={[styles.container, { paddingTop: insets.top + 12 }, style]}>
         {children}
