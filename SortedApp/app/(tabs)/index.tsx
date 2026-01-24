@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -15,6 +15,8 @@ import {
   View as RNView,
   Pressable,
   Image,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/contexts/AuthContext';
@@ -31,6 +33,7 @@ import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
 import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getFirstName } from '@/utils/name';
 
 interface Member {
   userId: string;
@@ -61,7 +64,8 @@ export default function DashboardScreen() {
     outputRange: [0, 0.92],
     extrapolate: 'clamp',
   });
-  const userName = userProfile?.name || 'User';
+  const hasShownToastRef = useRef(false);
+  const userName = getFirstName(userProfile?.name || 'User', 'User');
   const houseId = userProfile?.houseId;
   const currentUserId = user?.uid;
 
@@ -83,6 +87,9 @@ export default function DashboardScreen() {
   const [nudgeModalVisible, setNudgeModalVisible] = useState(false);
   const [nudgeInput, setNudgeInput] = useState('');
   const [nudgeSubmitting, setNudgeSubmitting] = useState(false);
+  const [toastNotification, setToastNotification] = useState<any>(null);
+  const toastAnim = useRef(new Animated.Value(0));
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     notifications,
@@ -90,6 +97,8 @@ export default function DashboardScreen() {
     unreadNotifications,
     markAsRead,
     getNextUnreadToast,
+    markToastSeen,
+    resetToastSeen,
   } = useAlfred({
     houseId: houseId ?? null,
     userId: currentUserId ?? null,
@@ -115,7 +124,7 @@ export default function DashboardScreen() {
           const data = doc.data();
           return {
             userId: doc.id,
-            name: data.name || 'Unknown',
+            name: getFirstName(data.name || 'Unknown', 'Unknown'),
             totalPoints: data.totalPoints || 0,
             photoUrl: data.photoUrl || data.photoURL || null,
           };
@@ -282,6 +291,57 @@ export default function DashboardScreen() {
     });
   };
 
+  const handleNotificationPress = (notification: any) => {
+    if (!notification) return;
+    markAsRead(notification.notificationId);
+    if (notification.type === 'BILL_CONTESTED' && notification.metadata?.transactionId) {
+      setAlfredModalVisible(false);
+      router.push({
+        pathname: '/(tabs)/finance',
+        params: { focusTransactionId: notification.metadata.transactionId },
+      });
+    }
+  };
+
+  const hideToast = useCallback(
+    (markRead: boolean) => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
+      const current = toastNotification;
+      Animated.timing(toastAnim.current, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }).start(() => {
+        setToastNotification(null);
+        if (markRead && current?.notificationId) {
+          markAsRead(current.notificationId);
+        }
+      });
+    },
+    [markAsRead, toastNotification]
+  );
+
+  const showToast = useCallback(
+    (notification: any) => {
+      setToastNotification(notification);
+      Animated.timing(toastAnim.current, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+      toastTimeoutRef.current = setTimeout(() => {
+        hideToast(false);
+      }, 6000);
+    },
+    [hideToast]
+  );
+
   const handleSendNudge = async () => {
     if (!houseId || !currentUserId) return;
     if (!nudgeInput.trim()) {
@@ -358,6 +418,7 @@ export default function DashboardScreen() {
     const labels: Record<string, string> = {
       CHORE_DUE: 'Chore update',
       BILL_ADDED: 'Bill added',
+      BILL_CONTESTED: 'Bill contested',
       NUDGE: 'Nudge',
       MEETING_REQUEST: 'House meeting',
     };
@@ -535,15 +596,33 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (!houseId || !currentUserId) return;
+    if (hasShownToastRef.current) return;
     const nextToast = getNextUnreadToast();
     if (!nextToast) return;
-    Alert.alert('Alfred', nextToast.message, [
-      {
-        text: 'Dismiss',
-        onPress: () => markAsRead(nextToast.notificationId),
-      },
-    ]);
-  }, [houseId, currentUserId, getNextUnreadToast, markAsRead]);
+    hasShownToastRef.current = true;
+    markToastSeen(nextToast.notificationId);
+    showToast(nextToast);
+  }, [houseId, currentUserId, getNextUnreadToast, markToastSeen, showToast]);
+
+  useEffect(() => {
+    const handleAppState = (status: AppStateStatus) => {
+      if (status === 'active') {
+        hasShownToastRef.current = false;
+        resetToastSeen();
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppState);
+    return () => subscription.remove();
+  }, [resetToastSeen]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // No house case
   if (!houseId) {
@@ -592,13 +671,15 @@ export default function DashboardScreen() {
         <RNView style={styles.headerBlock}>
           <RNView style={styles.headerRow}>
             <RNView style={styles.profileRow}>
-              {userPhotoUrl ? (
-                <Image source={{ uri: userPhotoUrl }} style={styles.profileAvatar} />
-              ) : (
-                <RNView style={styles.profileAvatarFallback}>
-                  <Text style={styles.profileAvatarText}>{getInitial(userName)}</Text>
-                </RNView>
-              )}
+              <Pressable onPress={() => router.push('/(tabs)/settings')}>
+                {userPhotoUrl ? (
+                  <Image source={{ uri: userPhotoUrl }} style={styles.profileAvatar} />
+                ) : (
+                  <RNView style={styles.profileAvatarFallback}>
+                    <Text style={styles.profileAvatarText}>{getInitial(userName)}</Text>
+                  </RNView>
+                )}
+              </Pressable>
               <RNView>
                 <Text style={styles.headerGreeting}>Welcome back</Text>
                 <Text style={styles.headerName}>{userName}</Text>
@@ -758,7 +839,7 @@ export default function DashboardScreen() {
                             member.deviation
                           )} vs avg`;
                           Alert.alert(
-                            member.userName,
+                            getFirstName(member.userName, 'User'),
                             `${member.totalPoints} pts | ${deviationText}`
                           );
                         }}
@@ -773,7 +854,7 @@ export default function DashboardScreen() {
                             ]}
                           >
                             <Text style={styles.fairnessAvatarText}>
-                              {getInitial(member.userName)}
+                              {getInitial(getFirstName(member.userName, 'User'))}
                             </Text>
                           </RNView>
                         )}
@@ -794,7 +875,7 @@ export default function DashboardScreen() {
                 sortedFairnessStats.map((member) => (
                   <RNView key={member.userId} style={styles.fairnessRow}>
                     <Text style={styles.fairnessMemberName}>
-                      {member.userName}
+                      {getFirstName(member.userName, 'User')}
                       {member.userId === currentUserId ? ' (You)' : ''}
                     </Text>
                     <RNView style={styles.fairnessMeta}>
@@ -882,6 +963,60 @@ export default function DashboardScreen() {
         <Text style={styles.stickyHeaderTitle}>Dashboard</Text>
       </Animated.View>
 
+      {toastNotification && (
+        <Animated.View
+          pointerEvents="box-none"
+          style={[
+            styles.toastWrapper,
+            {
+              paddingTop: insets.top + 8,
+              transform: [
+                {
+                  translateY: toastAnim.current.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-80, 0],
+                  }),
+                },
+              ],
+              opacity: toastAnim.current,
+            },
+          ]}
+        >
+          <RNView style={styles.toastCard}>
+            <RNView style={styles.toastHeader}>
+              <Text style={styles.toastTitle}>Alfred</Text>
+              <Pressable onPress={() => hideToast(false)}>
+                <Text style={styles.toastClose}>×</Text>
+              </Pressable>
+            </RNView>
+            <Text style={styles.toastMessage}>{toastNotification.message}</Text>
+            <RNView style={styles.toastActions}>
+              {toastNotification.type === 'BILL_CONTESTED' &&
+                toastNotification.metadata?.transactionId && (
+                  <Pressable
+                    style={styles.toastAction}
+                    onPress={() => {
+                      hideToast(true);
+                      router.push({
+                        pathname: '/(tabs)/finance',
+                        params: { focusTransactionId: toastNotification.metadata.transactionId },
+                      });
+                    }}
+                  >
+                    <Text style={styles.toastActionText}>View</Text>
+                  </Pressable>
+                )}
+              <Pressable
+                style={styles.toastAction}
+                onPress={() => hideToast(true)}
+              >
+                <Text style={styles.toastActionText}>Mark read</Text>
+              </Pressable>
+            </RNView>
+          </RNView>
+        </Animated.View>
+      )}
+
     <Modal
       visible={alfredModalVisible}
       transparent
@@ -911,9 +1046,10 @@ export default function DashboardScreen() {
                 <Text style={styles.description}>No notifications yet.</Text>
               ) : (
                 notifications.map((notification) => (
-                  <RNView
+                  <Pressable
                     key={notification.notificationId}
                     style={styles.notificationRow}
+                    onPress={() => handleNotificationPress(notification)}
                   >
                     <Text style={styles.notificationMessage}>
                       {notification.message}
@@ -922,7 +1058,7 @@ export default function DashboardScreen() {
                       {formatNotificationType(notification.type)} -{' '}
                       {formatNotificationTime(notification.createdAt)}
                     </Text>
-                  </RNView>
+                  </Pressable>
                 ))
               )}
             </ScrollView>
@@ -1014,6 +1150,64 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   stickyHeaderTitle: {
     fontSize: 15,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  toastWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 16,
+    right: 16,
+    zIndex: 40,
+  },
+  toastCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  toastHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  toastTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  toastClose: {
+    fontSize: 18,
+    color: colors.muted,
+    fontWeight: '600',
+    paddingHorizontal: 6,
+  },
+  toastMessage: {
+    fontSize: 13,
+    color: colors.text,
+    lineHeight: 18,
+  },
+  toastActions: {
+    marginTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  toastAction: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.accentSoft,
+    marginLeft: 8,
+  },
+  toastActionText: {
+    fontSize: 12,
     fontWeight: '600',
     color: colors.accent,
   },

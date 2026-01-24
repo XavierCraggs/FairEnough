@@ -38,6 +38,7 @@ import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
 import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getFirstName } from '@/utils/name';
 
 const BORDER_RADIUS = 16;
 
@@ -215,7 +216,7 @@ export default function ChoresScreen() {
           const data = doc.data() as any;
           return {
             userId: doc.id,
-            name: data.name || 'Unnamed',
+            name: getFirstName(data.name || 'Unnamed', 'Unnamed'),
           };
         });
         setMembers(loadedMembers);
@@ -474,7 +475,7 @@ export default function ChoresScreen() {
   const getAssignedName = (assignedTo: string | null) => {
     if (!assignedTo) return 'Unassigned';
     const member = members.find((m) => m.userId === assignedTo);
-    return member?.name ?? 'Unassigned';
+    return getFirstName(member?.name ?? 'Unassigned', 'Unassigned');
   };
 
   const renderStatusBadge = (chore: ChoreData) => {
@@ -690,7 +691,7 @@ export default function ChoresScreen() {
                     isCurrentUser && styles.fairnessCurrentUserName,
                   ]}
                 >
-                  {member.userName}
+                  {getFirstName(member.userName, 'User')}
                 </Text>
                 <Text style={styles.fairnessPointsText}>
                   {member.totalPoints} pts

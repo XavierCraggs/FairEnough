@@ -20,6 +20,7 @@ export default function LoginScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rememberMe, setRememberMe] = useState(false);
@@ -94,11 +95,22 @@ export default function LoginScreen() {
               placeholderTextColor={colors.muted}
               value={password}
               onChangeText={setPassword}
-              secureTextEntry
+              secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoComplete="password"
               editable={!loading}
             />
+            <Pressable
+              onPress={() => setShowPassword((value) => !value)}
+              style={styles.visibilityButton}
+              hitSlop={8}
+            >
+              <FontAwesome
+                name={showPassword ? 'eye-slash' : 'eye'}
+                size={16}
+                color={colors.muted}
+              />
+            </Pressable>
           </View>
 
           {error && <Text style={styles.errorText}>{error}</Text>}
@@ -223,6 +235,10 @@ const createStyles = (colors: AppTheme) =>
     color: colors.text,
     marginLeft: 10,
     padding: 0,
+  },
+  visibilityButton: {
+    paddingLeft: 8,
+    paddingVertical: 2,
   },
   errorText: {
     color: colors.danger,

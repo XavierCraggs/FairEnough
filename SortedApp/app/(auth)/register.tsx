@@ -23,6 +23,8 @@ export default function RegisterScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -139,11 +141,22 @@ export default function RegisterScreen() {
                 placeholderTextColor={colors.muted}
                 value={password}
                 onChangeText={setPassword}
-                secureTextEntry
+                secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoComplete="password-new"
                 editable={!loading}
               />
+              <Pressable
+                onPress={() => setShowPassword((value) => !value)}
+                style={styles.visibilityButton}
+                hitSlop={8}
+              >
+                <FontAwesome
+                  name={showPassword ? 'eye-slash' : 'eye'}
+                  size={16}
+                  color={colors.muted}
+                />
+              </Pressable>
             </View>
 
             <Text style={styles.inputLabel}>Confirm Password</Text>
@@ -155,11 +168,22 @@ export default function RegisterScreen() {
                 placeholderTextColor={colors.muted}
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
-                secureTextEntry
+                secureTextEntry={!showConfirmPassword}
                 autoCapitalize="none"
                 autoComplete="password-new"
                 editable={!loading}
               />
+              <Pressable
+                onPress={() => setShowConfirmPassword((value) => !value)}
+                style={styles.visibilityButton}
+                hitSlop={8}
+              >
+                <FontAwesome
+                  name={showConfirmPassword ? 'eye-slash' : 'eye'}
+                  size={16}
+                  color={colors.muted}
+                />
+              </Pressable>
             </View>
 
             {error && <Text style={styles.errorText}>{error}</Text>}
@@ -260,6 +284,10 @@ const createStyles = (colors: AppTheme) =>
     color: colors.text,
     marginLeft: 10,
     padding: 0,
+  },
+  visibilityButton: {
+    paddingLeft: 8,
+    paddingVertical: 2,
   },
   errorText: {
     color: colors.danger,

@@ -20,6 +20,7 @@ import { db } from '../api/firebase';
 export type AlfredNotificationType =
   | 'CHORE_DUE'
   | 'BILL_ADDED'
+  | 'BILL_CONTESTED'
   | 'NUDGE'
   | 'MEETING_REQUEST';
 
@@ -95,6 +96,14 @@ export const getAlfredMessage = (
         `Pardon me, a new expense of ${amount} has been recorded for the household.`,
         `Just a heads-up: I have logged a bill totaling ${amount}.`,
         `A new household expense (${amount}) has been added to the ledger.`,
+      ]);
+    }
+    case 'BILL_CONTESTED': {
+      const reason = metadata?.reason || 'a question about the split';
+      return pickRandom([
+        `A gentle note: a bill has been contested due to ${reason}.`,
+        `I've received a dispute regarding a bill (${reason}).`,
+        `A housemate has flagged a bill for review: ${reason}.`,
       ]);
     }
     case 'MEETING_REQUEST': {

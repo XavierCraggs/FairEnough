@@ -12,6 +12,7 @@ import {
   Timestamp,
   where,
   deleteDoc,
+  arrayUnion,
 } from 'firebase/firestore';
 import { db } from '../api/firebase';
 import notificationService from './notificationService';
@@ -30,8 +31,21 @@ export interface TransactionData {
   splitWith: string[];
   splitAmounts?: Record<string, number> | null;
   confirmedBy: string[];
+  contestedBy?: string[];
+  contestNotes?: Record<string, { reason: string; note?: string; createdAt: Timestamp }>;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+export interface SettlementData {
+  settlementId: string;
+  houseId: string;
+  from: string;
+  to: string;
+  amount: number;
+  createdBy: string;
+  note?: string;
+  createdAt: Timestamp;
 }
 
 /**
@@ -154,6 +168,8 @@ class FinanceService {
           description: description.trim(),
           splitWith: normalizedSplit,
           confirmedBy: [payerId],
+          contestedBy: [],
+          contestNotes: {},
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         };
@@ -284,6 +300,8 @@ class FinanceService {
           description: updates.description.trim(),
           splitWith: normalizedSplit,
           confirmedBy: [userId],
+          contestedBy: [],
+          contestNotes: {},
           updatedAt: serverTimestamp(),
         };
 
@@ -340,6 +358,143 @@ class FinanceService {
       throw this.createError(
         FinanceServiceErrorCode.UNKNOWN_ERROR,
         'Failed to fetch transactions.',
+        error
+      );
+    }
+  }
+
+  async addSettlement(
+    houseId: string,
+    from: string,
+    to: string,
+    amount: number,
+    createdBy: string,
+    note?: string
+  ): Promise<SettlementData> {
+    try {
+      if (!houseId || !from || !to || !createdBy) {
+        throw this.createError(
+          FinanceServiceErrorCode.INVALID_INPUT,
+          'House ID, from, to, and createdBy are required.'
+        );
+      }
+
+      if (from === to) {
+        throw this.createError(
+          FinanceServiceErrorCode.INVALID_INPUT,
+          'Settlement must be between two different members.'
+        );
+      }
+
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw this.createError(
+          FinanceServiceErrorCode.INVALID_INPUT,
+          'Amount must be greater than 0.'
+        );
+      }
+
+      await this.verifyUserInHouse(createdBy, houseId);
+      await this.verifyUserInHouse(from, houseId);
+      await this.verifyUserInHouse(to, houseId);
+
+      if (createdBy !== from) {
+        throw this.createError(
+          FinanceServiceErrorCode.UNAUTHORIZED,
+          'Only the person paying can record a settlement.'
+        );
+      }
+
+      const settlement = await runTransaction(db, async (transaction) => {
+        const settlementsRef = collection(db, 'houses', houseId, 'settlements');
+        const newSettlementRef = doc(settlementsRef);
+
+        const payload = {
+          houseId,
+          from,
+          to,
+          amount: Math.round(amount * 100) / 100,
+          createdBy,
+          note: note?.trim() || '',
+          createdAt: serverTimestamp(),
+        };
+
+        transaction.set(newSettlementRef, payload);
+
+        return {
+          settlementId: newSettlementRef.id,
+          ...payload,
+        } as SettlementData;
+      });
+
+      return settlement;
+    } catch (error) {
+      if (this.isFinanceServiceError(error)) {
+        throw error;
+      }
+      throw this.createError(
+        FinanceServiceErrorCode.TRANSACTION_FAILED,
+        'Failed to add settlement. Please try again.',
+        error
+      );
+    }
+  }
+
+  subscribeToSettlements(
+    houseId: string,
+    callback: (settlements: SettlementData[]) => void
+  ): () => void {
+    if (!houseId) {
+      throw this.createError(
+        FinanceServiceErrorCode.INVALID_INPUT,
+        'House ID is required.'
+      );
+    }
+
+    const settlementsRef = collection(db, 'houses', houseId, 'settlements');
+    const q = query(settlementsRef, orderBy('createdAt', 'desc'));
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const settlements = snapshot.docs.map((docSnap) => ({
+          settlementId: docSnap.id,
+          ...docSnap.data(),
+        })) as SettlementData[];
+        callback(settlements);
+      },
+      (error) => {
+        console.error('Error in settlements subscription:', error);
+        callback([]);
+      }
+    );
+
+    return unsubscribe;
+  }
+
+  async getHouseSettlements(houseId: string): Promise<SettlementData[]> {
+    try {
+      if (!houseId) {
+        throw this.createError(
+          FinanceServiceErrorCode.INVALID_INPUT,
+          'House ID is required.'
+        );
+      }
+
+      const settlementsRef = collection(db, 'houses', houseId, 'settlements');
+      const q = query(settlementsRef, orderBy('createdAt', 'desc'));
+      const snapshot = await getDocs(q);
+
+      return snapshot.docs.map((docSnap) => ({
+        settlementId: docSnap.id,
+        ...docSnap.data(),
+      })) as SettlementData[];
+    } catch (error) {
+      if (this.isFinanceServiceError(error)) {
+        throw error;
+      }
+      throw this.createError(
+        FinanceServiceErrorCode.UNKNOWN_ERROR,
+        'Failed to fetch settlements.',
         error
       );
     }
@@ -497,6 +652,122 @@ class FinanceService {
     }
   }
 
+  async contestTransaction(
+    houseId: string,
+    transactionId: string,
+    userId: string,
+    reason: string,
+    note?: string
+  ): Promise<TransactionData> {
+    try {
+      if (!houseId || !transactionId || !userId) {
+        throw this.createError(
+          FinanceServiceErrorCode.INVALID_INPUT,
+          'House ID, transaction ID, and user ID are required.'
+        );
+      }
+
+      if (!reason?.trim()) {
+        throw this.createError(
+          FinanceServiceErrorCode.INVALID_INPUT,
+          'A reason is required to contest this transaction.'
+        );
+      }
+
+      await this.verifyUserInHouse(userId, houseId);
+
+      const updated = await runTransaction(db, async (transaction) => {
+        const transactionRef = doc(db, 'houses', houseId, 'transactions', transactionId);
+        const transactionDoc = await transaction.get(transactionRef);
+
+        if (!transactionDoc.exists()) {
+          throw this.createError(
+            FinanceServiceErrorCode.TRANSACTION_NOT_FOUND,
+            'Transaction not found.'
+          );
+        }
+
+        const data = transactionDoc.data() as TransactionData;
+        const splitWith = data.splitWith || [];
+
+        if (!splitWith.includes(userId)) {
+          throw this.createError(
+            FinanceServiceErrorCode.UNAUTHORIZED,
+            'You are not part of this transaction.'
+          );
+        }
+
+        if ((data.confirmedBy || []).includes(userId)) {
+          throw this.createError(
+            FinanceServiceErrorCode.UNAUTHORIZED,
+            'You already confirmed this transaction.'
+          );
+        }
+
+        const totalParticipants = splitWith.length;
+        const confirmedCount = data.confirmedBy?.length ?? 0;
+        if (totalParticipants > 0 && confirmedCount >= totalParticipants) {
+          throw this.createError(
+            FinanceServiceErrorCode.UNAUTHORIZED,
+            'This transaction has already been confirmed.'
+          );
+        }
+
+        if (data.payerId === userId) {
+          throw this.createError(
+            FinanceServiceErrorCode.UNAUTHORIZED,
+            'The payer cannot contest their own transaction.'
+          );
+        }
+
+        const contestedBy = Array.from(new Set([...(data.contestedBy || []), userId]));
+        const notePayload = {
+          reason: reason.trim(),
+          note: note?.trim() || '',
+          createdAt: serverTimestamp(),
+        };
+
+        transaction.update(transactionRef, {
+          contestedBy,
+          [`contestNotes.${userId}`]: notePayload,
+          updatedAt: serverTimestamp(),
+        });
+
+        return {
+          ...data,
+          transactionId,
+          contestedBy,
+        } as TransactionData;
+      });
+
+      try {
+        await notificationService.sendAlfredNudge(
+          houseId,
+          userId,
+          'BILL_CONTESTED',
+          {
+            transactionId,
+            payerId: updated.payerId,
+            reason: reason.trim(),
+          }
+        );
+      } catch (notifyError) {
+        console.error('Failed to send contest notification:', notifyError);
+      }
+
+      return updated;
+    } catch (error) {
+      if (this.isFinanceServiceError(error)) {
+        throw error;
+      }
+      throw this.createError(
+        FinanceServiceErrorCode.TRANSACTION_FAILED,
+        'Failed to contest transaction. Please try again.',
+        error
+      );
+    }
+  }
+
   /**
    * Calculate simplified debts for a house
    */
@@ -509,8 +780,9 @@ class FinanceService {
         );
       }
 
-      const [transactions, membersSnapshot] = await Promise.all([
+      const [transactions, settlements, membersSnapshot] = await Promise.all([
         this.getHouseTransactions(houseId),
+        this.getHouseSettlements(houseId),
         getDocs(query(collection(db, 'users'), where('houseId', '==', houseId))),
       ]);
 
@@ -520,13 +792,24 @@ class FinanceService {
         memberNames.set(docSnap.id, data?.name || 'Unknown');
       });
 
+      const settlementTransactions = settlements
+        .filter((settlement) => Number.isFinite(settlement.amount) && settlement.amount > 0)
+        .map((settlement) => ({
+          payerId: settlement.from,
+          amount: settlement.amount,
+          splitWith: [settlement.to],
+        }));
+
       return calculateSimplifiedDebts(
-        transactions.map((transaction) => ({
-          payerId: transaction.payerId,
-          amount: transaction.amount,
-          splitWith: transaction.splitWith || [],
-          splitAmounts: transaction.splitAmounts,
-        })),
+        [
+          ...transactions.map((transaction) => ({
+            payerId: transaction.payerId,
+            amount: transaction.amount,
+            splitWith: transaction.splitWith || [],
+            splitAmounts: transaction.splitAmounts,
+          })),
+          ...settlementTransactions,
+        ],
         (userId) => memberNames.get(userId) || 'Unknown'
       );
     } catch (error) {

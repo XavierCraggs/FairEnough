@@ -35,9 +35,10 @@ import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
 import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getFirstName } from '@/utils/name';
 
 const BORDER_RADIUS = 16;
-const UPCOMING_DAYS = 60;
+const UPCOMING_DAYS = 30;
 
 type EventOccurrence = {
   occurrenceId: string;
@@ -107,7 +108,7 @@ export default function CalendarScreen() {
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
 
   const [modalVisible, setModalVisible] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEventData | null>(null);
@@ -476,7 +477,7 @@ export default function CalendarScreen() {
         <RNView style={styles.eventMetaRow}>
           <RNView>
             <Text style={styles.eventMetaText}>
-              Created by {item.event.createdByName}
+              Created by {getFirstName(item.event.createdByName, 'Housemate')}
             </Text>
             {recurrenceEnd && (
               <Text style={styles.eventMetaText}>Repeats until {recurrenceEnd}</Text>
@@ -672,7 +673,11 @@ export default function CalendarScreen() {
               )}
 
               <Text style={styles.modalLabel}>Repeat</Text>
-              <RNView style={styles.dropdownContainer}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chipRow}
+              >
                 {RECURRENCE_OPTIONS.map((option) => (
                   <Pressable
                     key={option.value}
@@ -692,7 +697,7 @@ export default function CalendarScreen() {
                     </Text>
                   </Pressable>
                 ))}
-              </RNView>
+              </ScrollView>
 
               {recurrenceInput === 'none' ? (
                 <Text style={styles.modalHelperText}>
@@ -701,7 +706,11 @@ export default function CalendarScreen() {
               ) : (
                 <>
                   <Text style={styles.modalLabel}>Repeat ends</Text>
-                  <RNView style={styles.dropdownContainer}>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.chipRow}
+                  >
                     <Pressable
                       style={[
                         styles.dropdownChip,
@@ -742,7 +751,7 @@ export default function CalendarScreen() {
                         End date
                       </Text>
                     </Pressable>
-                  </RNView>
+                  </ScrollView>
                   {endDateEnabled && (
                     <>
                       <Pressable
@@ -1026,10 +1035,12 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   toggleRow: {
     flexDirection: 'row',
-    backgroundColor: colors.accentSoft,
+    backgroundColor: colors.surface,
     borderRadius: 999,
     padding: 4,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   toggleButton: {
     flex: 1,
@@ -1038,7 +1049,12 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     alignItems: 'center',
   },
   toggleButtonActive: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   toggleButtonText: {
     fontSize: 13,
@@ -1046,7 +1062,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontWeight: '600',
   },
   toggleButtonTextActive: {
-    color: colors.accent,
+    color: colors.onAccent,
   },
   centeredMessage: {
     flex: 1,
@@ -1321,6 +1337,11 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     marginTop: 4,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
   },
   dropdownChip: {
     borderRadius: 999,

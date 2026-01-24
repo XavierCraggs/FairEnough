@@ -35,7 +35,11 @@ module.exports = {
     },
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.xavierc.sortedapp"
+      bundleIdentifier: "com.xavierc.sortedapp",
+      usesAppleSignIn: true,
+      infoPlist: {
+        CFBundleAllowMixedLocalizations: true
+      }
     },
     android: {
       adaptiveIcon: {
@@ -55,7 +59,8 @@ module.exports = {
       "expo-router",
       "@react-native-community/datetimepicker",
       "expo-image-picker",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-apple-authentication"
     ],
     experiments: {
       typedRoutes: true

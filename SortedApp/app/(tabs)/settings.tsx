@@ -30,15 +30,22 @@ import { AppTheme } from '@/constants/AppColors';
 import { useThemePreference } from '@/contexts/ThemeContext';
 import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getFirstName } from '@/utils/name';
+import notificationService from '@/services/notificationService';
+import choreService from '@/services/choreService';
+import financeService from '@/services/financeService';
+import calendarService from '@/services/calendarService';
 
 const SUPPORT_EMAIL = 'support@sortedapp.app';
 const HELP_CENTER_URL = 'https://sortedapp.app/help';
 const PRIVACY_URL = 'https://sortedapp.app/privacy';
 const TERMS_URL = 'https://sortedapp.app/terms';
+const ADMIN_UIDS = ['kfimxeubPFR7kSyYtd2UZbmMAuC2'];
 
 export default function SettingsScreen() {
   const { userProfile } = useAuth();
   const houseId = userProfile?.houseId ?? null;
+  const currentUserId = userProfile?.uid ?? null;
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -49,6 +56,7 @@ export default function SettingsScreen() {
     extrapolate: 'clamp',
   });
   const { preference, setPreference } = useThemePreference();
+  const isAdmin = !!currentUserId && ADMIN_UIDS.includes(currentUserId);
 
   const [loading, setLoading] = useState(false);
   const [houseData, setHouseData] = useState<HouseData | null>(null);
@@ -294,6 +302,91 @@ export default function SettingsScreen() {
       : 'House Pass is active.'
     : 'Unlock calendar sync, receipt OCR, and advanced analytics for your house.';
 
+  const handleSendTestNotification = async (type: string) => {
+    if (!houseId || !currentUserId) return;
+    try {
+      const metadata =
+        type === 'BILL_ADDED'
+          ? { amount: 24.5, description: 'Test bill' }
+          : type === 'BILL_CONTESTED'
+          ? { reason: 'Amount looks wrong', transactionId: 'test' }
+          : type === 'CHORE_DUE'
+          ? { choreName: 'Test chore', action: 'overdue' }
+          : type === 'MEETING_REQUEST'
+          ? { subject: 'a quick house check-in' }
+          : { subject: 'test notification' };
+
+      await notificationService.sendAlfredNudge(
+        houseId,
+        currentUserId,
+        type as any,
+        metadata
+      );
+      Alert.alert('Admin', 'Test notification sent.');
+    } catch (error: any) {
+      Alert.alert('Admin', error?.message || 'Unable to send notification.');
+    }
+  };
+
+  const handleCreateTestBill = async () => {
+    if (!houseId || !currentUserId) return;
+    try {
+      const splitWith = houseData?.members?.length
+        ? houseData.members
+        : [currentUserId];
+      await financeService.addTransaction(
+        houseId,
+        currentUserId,
+        42.5,
+        'Test bill',
+        splitWith
+      );
+      Alert.alert('Admin', 'Test bill created.');
+    } catch (error: any) {
+      Alert.alert('Admin', error?.message || 'Unable to create test bill.');
+    }
+  };
+
+  const handleCreateTestChore = async () => {
+    if (!houseId || !currentUserId) return;
+    try {
+      await choreService.addChore({
+        houseId,
+        title: 'Test chore',
+        description: 'Admin seeded chore',
+        points: 4,
+        assignedTo: currentUserId,
+        frequency: 'weekly',
+        createdBy: currentUserId,
+      });
+      Alert.alert('Admin', 'Test chore created.');
+    } catch (error: any) {
+      Alert.alert('Admin', error?.message || 'Unable to create test chore.');
+    }
+  };
+
+  const handleCreateTestEvent = async () => {
+    if (!houseId || !currentUserId) return;
+    try {
+      const startDate = new Date();
+      await calendarService.addEvent(
+        houseId,
+        currentUserId,
+        'Test event',
+        startDate,
+        'Admin seeded event',
+        {
+          frequency: 'none',
+          interval: 1,
+          endDate: null,
+        }
+      );
+      Alert.alert('Admin', 'Test event created.');
+    } catch (error: any) {
+      Alert.alert('Admin', error?.message || 'Unable to create test event.');
+    }
+  };
+
   return (
     <ScreenShell style={styles.container}>
       <Animated.ScrollView
@@ -355,7 +448,9 @@ export default function SettingsScreen() {
               )}
             </RNView>
             <RNView style={styles.profileMeta}>
-              <Text style={styles.detailText}>{userProfile?.name || 'User'}</Text>
+              <Text style={styles.detailText}>
+                {getFirstName(userProfile?.name || 'User', 'User')}
+              </Text>
               <RNView style={styles.infoRow}>
                 <FontAwesome name="envelope" size={12} color={colors.muted} />
                 <Text style={[styles.helperText, styles.infoText]}>
@@ -378,6 +473,10 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Premium</Text>
           <Text style={styles.description}>{premiumStatusLine}</Text>
+          <RNView style={styles.premiumFeatureRow}>
+            <Text style={styles.premiumFeatureText}>iPad mode (coming soon)</Text>
+            <Text style={styles.premiumBadge}>Premium</Text>
+          </RNView>
           {houseData?.isPremium ? (
             <>
               <TouchableOpacity
@@ -525,6 +624,45 @@ export default function SettingsScreen() {
             <FontAwesome name="chevron-right" size={12} color={colors.muted} />
           </TouchableOpacity>
         </View>
+
+        {isAdmin && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Admin Tools</Text>
+            <Text style={styles.description}>
+              Send test notifications or seed demo data for this house.
+            </Text>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() =>
+                Alert.alert('Send test notification', 'Choose a type', [
+                  { text: 'Bill added', onPress: () => handleSendTestNotification('BILL_ADDED') },
+                  {
+                    text: 'Bill contested',
+                    onPress: () => handleSendTestNotification('BILL_CONTESTED'),
+                  },
+                  { text: 'Chore due', onPress: () => handleSendTestNotification('CHORE_DUE') },
+                  {
+                    text: 'Meeting request',
+                    onPress: () => handleSendTestNotification('MEETING_REQUEST'),
+                  },
+                  { text: 'Nudge', onPress: () => handleSendTestNotification('NUDGE') },
+                  { text: 'Cancel', style: 'cancel' },
+                ])
+              }
+            >
+              <Text style={styles.secondaryButtonText}>Send test notification</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleCreateTestBill}>
+              <Text style={styles.secondaryButtonText}>Create test bill</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleCreateTestChore}>
+              <Text style={styles.secondaryButtonText}>Create test chore</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleCreateTestEvent}>
+              <Text style={styles.secondaryButtonText}>Create test event</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account Actions</Text>
@@ -790,6 +928,32 @@ const createStyles = (colors: AppTheme) =>
     fontSize: 12,
     color: colors.muted,
     fontWeight: '600',
+  },
+  premiumFeatureRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  premiumFeatureText: {
+    fontSize: 14,
+    color: colors.accent,
+    fontWeight: '600',
+  },
+  premiumBadge: {
+    fontSize: 11,
+    color: colors.onAccent,
+    fontWeight: '700',
+    backgroundColor: colors.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
   },
   toggleGroup: {
     flexDirection: 'row',

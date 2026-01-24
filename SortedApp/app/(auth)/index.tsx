@@ -16,6 +16,8 @@ import { AppTheme } from '@/constants/AppColors';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import * as Facebook from 'expo-auth-session/providers/facebook';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
 import authService, { AuthServiceError } from '@/services/authService';
 
@@ -25,18 +27,27 @@ export default function AuthWelcomeScreen() {
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [authLoading, setAuthLoading] = useState(false);
+  const [appleAvailable, setAppleAvailable] = useState(false);
   const googleWebClientId = Constants.expoConfig?.extra?.googleWebClientId ?? '';
   const googleAndroidClientId =
     Constants.expoConfig?.extra?.googleAndroidClientId ?? '';
   const googleIosClientId = Constants.expoConfig?.extra?.googleIosClientId ?? '';
   const googleExpoClientId = Constants.expoConfig?.extra?.googleExpoClientId ?? '';
   const facebookAppId = Constants.expoConfig?.extra?.facebookAppId ?? '';
+  const isExpoGo = Constants.appOwnership === 'expo';
+  const resolvedExpoClientId = googleExpoClientId || googleWebClientId || '';
+  const resolvedIosClientId = isExpoGo
+    ? googleIosClientId || resolvedExpoClientId
+    : googleIosClientId;
+  const resolvedAndroidClientId = isExpoGo
+    ? googleAndroidClientId || resolvedExpoClientId
+    : googleAndroidClientId;
 
   const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest({
     webClientId: googleWebClientId,
-    androidClientId: googleAndroidClientId || undefined,
-    iosClientId: googleIosClientId || undefined,
-    expoClientId: googleExpoClientId || undefined,
+    androidClientId: resolvedAndroidClientId || undefined,
+    iosClientId: resolvedIosClientId || undefined,
+    expoClientId: resolvedExpoClientId || undefined,
     responseType: 'id_token',
     scopes: ['profile', 'email'],
     prompt: 'select_account',
@@ -94,6 +105,67 @@ export default function AuthWelcomeScreen() {
     handleFacebookResponse();
   }, [facebookResponse]);
 
+  useEffect(() => {
+    const checkAppleAvailability = async () => {
+      if (Platform.OS !== 'ios') {
+        setAppleAvailable(false);
+        return;
+      }
+      try {
+        const available = await AppleAuthentication.isAvailableAsync();
+        setAppleAvailable(available);
+      } catch {
+        setAppleAvailable(false);
+      }
+    };
+
+    checkAppleAvailability();
+  }, []);
+
+  const createNonce = () =>
+    Array.from({ length: 32 }, () =>
+      Math.floor(Math.random() * 36).toString(36)
+    ).join('');
+
+  const handleApplePress = async () => {
+    if (!appleAvailable) {
+      Alert.alert('Sorted', 'Apple sign-in is not available on this device.');
+      return;
+    }
+
+    try {
+      setAuthLoading(true);
+      const rawNonce = createNonce();
+      const hashedNonce = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        rawNonce
+      );
+
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+        nonce: hashedNonce,
+      });
+
+      if (!credential.identityToken) {
+        Alert.alert('Sorted', 'Unable to sign in with Apple right now.');
+        return;
+      }
+
+      await authService.signInWithApple(credential.identityToken, rawNonce);
+    } catch (err: any) {
+      if (err?.code === 'ERR_REQUEST_CANCELED') {
+        return;
+      }
+      const authError = err as AuthServiceError;
+      Alert.alert('Sorted', authError?.message || 'Apple sign-in failed.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleGooglePress = async () => {
     const needsAndroidId = Platform.OS === 'android';
     const needsIosId = Platform.OS === 'ios';
@@ -106,11 +178,11 @@ export default function AuthWelcomeScreen() {
       Alert.alert('Sorted', 'Google sign-in is not configured yet.');
       return;
     }
-    if (needsAndroidId && !hasAndroidId) {
+    if (needsAndroidId && !hasAndroidId && !(isExpoGo && resolvedExpoClientId)) {
       Alert.alert('Sorted', 'Missing Android Google client ID.');
       return;
     }
-    if (needsIosId && !hasIosId) {
+    if (needsIosId && !hasIosId && !(isExpoGo && resolvedExpoClientId)) {
       Alert.alert('Sorted', 'Missing iOS Google client ID.');
       return;
     }
@@ -118,7 +190,7 @@ export default function AuthWelcomeScreen() {
       Alert.alert('Sorted', 'Google sign-in is unavailable right now.');
       return;
     }
-    await googlePromptAsync({ useProxy: false });
+    await googlePromptAsync({ useProxy: isExpoGo });
   };
 
   const handleFacebookPress = async () => {
@@ -145,6 +217,16 @@ export default function AuthWelcomeScreen() {
       </Text>
 
       <View style={styles.socialGroup}>
+        {appleAvailable && (
+          <TouchableOpacity
+            style={[styles.socialButton, authLoading && styles.buttonDisabled]}
+            onPress={handleApplePress}
+            disabled={authLoading}
+          >
+            <FontAwesome name="apple" size={18} color={colors.accent} />
+            <Text style={styles.socialText}>Continue with Apple</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={[styles.socialButton, authLoading && styles.buttonDisabled]}
           onPress={handleGooglePress}

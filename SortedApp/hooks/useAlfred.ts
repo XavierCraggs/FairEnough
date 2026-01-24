@@ -65,9 +65,16 @@ export const useAlfred = ({ houseId, userId, suppressOwn = true }: UseAlfredOpti
     if (lastSeenIdRef.current === nextUnread.notificationId) {
       return null;
     }
-    lastSeenIdRef.current = nextUnread.notificationId;
     return nextUnread;
   }, [nextUnread]);
+
+  const markToastSeen = useCallback((notificationId: string) => {
+    lastSeenIdRef.current = notificationId;
+  }, []);
+
+  const resetToastSeen = useCallback(() => {
+    lastSeenIdRef.current = null;
+  }, []);
 
   return {
     notifications,
@@ -76,6 +83,8 @@ export const useAlfred = ({ houseId, userId, suppressOwn = true }: UseAlfredOpti
     loading,
     markAsRead,
     getNextUnreadToast,
+    markToastSeen,
+    resetToastSeen,
   };
 };
 

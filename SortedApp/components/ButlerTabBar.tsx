@@ -4,6 +4,7 @@ import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
+import { selectionChanged } from '@/utils/haptics';
 
 const getIcon =
   (options: BottomTabBarProps['descriptors'][string]['options'], focused: boolean, color: string) =>
@@ -37,6 +38,7 @@ export default function ButlerTabBar({ state, descriptors, navigation }: BottomT
             });
 
             if (!focused && !event.defaultPrevented) {
+              selectionChanged();
               navigation.navigate(route.name);
             }
           };

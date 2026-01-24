@@ -21,6 +21,7 @@ import { Text } from '@/components/Themed';
 import { useAuth } from '../../contexts/AuthContext';
 import financeService, {
   FinanceServiceError,
+  SettlementData,
   SimplifiedDebt,
   TransactionData,
 } from '../../services/financeService';
@@ -38,8 +39,16 @@ import { AppTheme } from '@/constants/AppColors';
 import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
+import { useLocalSearchParams } from 'expo-router';
+import { getFirstName } from '@/utils/name';
 
 const BORDER_RADIUS = 16;
+const CONTEST_REASONS = [
+  'I was not part of this expense',
+  'Amount looks wrong',
+  'Split should be different',
+  'Other',
+];
 
 interface MemberOption {
   userId: string;
@@ -52,6 +61,9 @@ export default function FinanceScreen() {
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const { focusTransactionId } = useLocalSearchParams<{
+    focusTransactionId?: string;
+  }>();
   const scrollY = useRef(new Animated.Value(0));
   const headerOpacity = scrollY.current.interpolate({
     inputRange: [0, 80],
@@ -67,6 +79,7 @@ export default function FinanceScreen() {
   const [debtsLoading, setDebtsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [members, setMembers] = useState<MemberOption[]>([]);
+  const [settlements, setSettlements] = useState<SettlementData[]>([]);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<TransactionData | null>(
@@ -81,6 +94,16 @@ export default function FinanceScreen() {
   const [customSplits, setCustomSplits] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [showSettled, setShowSettled] = useState(false);
+  const [debtDetailVisible, setDebtDetailVisible] = useState(false);
+  const [selectedDebt, setSelectedDebt] = useState<SimplifiedDebt | null>(null);
+  const [contestVisible, setContestVisible] = useState(false);
+  const [contestingTransaction, setContestingTransaction] =
+    useState<TransactionData | null>(null);
+  const [contestReason, setContestReason] = useState(CONTEST_REASONS[0]);
+  const [contestNote, setContestNote] = useState('');
+  const [highlightTransactionId, setHighlightTransactionId] = useState<string | null>(
+    null
+  );
 
   const isInHouse = !!houseId;
 
@@ -102,7 +125,7 @@ export default function FinanceScreen() {
 
   const getMemberName = useCallback(
     (userId: string, fallback?: string) =>
-      memberNameMap.get(userId) || fallback || 'Unknown',
+      getFirstName(memberNameMap.get(userId) || fallback || 'Unknown', 'Unknown'),
     [memberNameMap]
   );
 
@@ -110,6 +133,15 @@ export default function FinanceScreen() {
     const safeAmount = Number.isFinite(amount) ? amount : 0;
     return `$${safeAmount.toFixed(2)}`;
   }, []);
+
+  const formatSignedCurrency = useCallback(
+    (amount: number) => {
+      const safeAmount = Number.isFinite(amount) ? amount : 0;
+      const sign = safeAmount < 0 ? '-' : '+';
+      return `${sign}${formatCurrency(Math.abs(safeAmount))}`;
+    },
+    [formatCurrency]
+  );
 
   const formatDateTime = useCallback((value: any) => {
     if (value?.toDate) {
@@ -154,6 +186,74 @@ export default function FinanceScreen() {
     }, {});
   };
 
+  const roundCurrency = (value: number) => Math.round(value * 100) / 100;
+
+  const computeSplitValues = useCallback(
+    (transaction: TransactionData) => {
+      const splitWith = transaction.splitWith || [];
+      if (!splitWith.length) return {};
+      const amount = Number(transaction.amount) || 0;
+      if (!amount) return {};
+
+      if (transaction.splitAmounts) {
+        const totalSplit = splitWith.reduce((sum, memberId) => {
+          const value = Number(transaction.splitAmounts?.[memberId]);
+          if (!Number.isFinite(value)) {
+            return sum;
+          }
+          return sum + value;
+        }, 0);
+
+        if (totalSplit > 0) {
+          const scale = Math.abs(totalSplit - amount) > 0.01 ? amount / totalSplit : 1;
+          return splitWith.reduce<Record<string, number>>((acc, memberId) => {
+            const value = Number(transaction.splitAmounts?.[memberId]);
+            acc[memberId] = Number.isFinite(value) ? roundCurrency(value * scale) : 0;
+            return acc;
+          }, {});
+        }
+      }
+
+      const share = amount / splitWith.length;
+      return splitWith.reduce<Record<string, number>>((acc, memberId) => {
+        acc[memberId] = roundCurrency(share);
+        return acc;
+      }, {});
+    },
+    []
+  );
+
+  const getNetImpact = useCallback(
+    (transaction: TransactionData, userId: string) => {
+      const splitValues = computeSplitValues(transaction);
+      const share = splitValues[userId] ?? 0;
+      let delta = -share;
+      if (transaction.payerId === userId) {
+        delta += Number(transaction.amount) || 0;
+      }
+      return roundCurrency(delta);
+    },
+    [computeSplitValues]
+  );
+
+  const getImpactMap = useCallback(
+    (transaction: TransactionData) => {
+      const splitWith = transaction.splitWith || [];
+      const splitValues = computeSplitValues(transaction);
+      const participants = Array.from(new Set([...splitWith, transaction.payerId]));
+      return participants.reduce<Record<string, number>>((acc, userId) => {
+        const share = splitValues[userId] ?? 0;
+        let delta = -share;
+        if (transaction.payerId === userId) {
+          delta += Number(transaction.amount) || 0;
+        }
+        acc[userId] = roundCurrency(delta);
+        return acc;
+      }, {});
+    },
+    [computeSplitValues]
+  );
+
   const getAgeInDays = useCallback((value: any) => {
     if (!value?.toDate) return 0;
     const createdAt = value.toDate();
@@ -162,10 +262,7 @@ export default function FinanceScreen() {
   }, []);
 
   const getUrgencyTone = useCallback(
-    (ageDays: number, confirmed: boolean) => {
-      if (confirmed) {
-        return { label: 'Settled', color: colors.success, background: colors.successSoft };
-      }
+    (ageDays: number) => {
       if (ageDays >= 7) {
         return {
           label: `Overdue ${ageDays}d`,
@@ -180,7 +277,7 @@ export default function FinanceScreen() {
           background: colors.warningSoft,
         };
       }
-      return { label: 'Recent', color: colors.accent, background: colors.accentSoft };
+      return { label: 'New', color: colors.accent, background: colors.accentSoft };
     },
     [colors]
   );
@@ -197,6 +294,22 @@ export default function FinanceScreen() {
       (updated) => {
         setTransactions(updated);
         setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [houseId]);
+
+  useEffect(() => {
+    if (!houseId) {
+      setSettlements([]);
+      return;
+    }
+
+    const unsubscribe = financeService.subscribeToSettlements(
+      houseId,
+      (updated) => {
+        setSettlements(updated);
       }
     );
 
@@ -250,7 +363,7 @@ export default function FinanceScreen() {
   useEffect(() => {
     if (!houseId) return;
     loadDebts();
-  }, [houseId, loadDebts, transactions]);
+  }, [houseId, loadDebts, transactions, settlements]);
 
   const handleError = useCallback((err: any, fallbackMessage: string) => {
     const serviceError = err as FinanceServiceError;
@@ -401,7 +514,7 @@ export default function FinanceScreen() {
     const details = detailsInput.trim();
     const description = details ? `${title} - ${details}` : title;
 
-    let splitAmounts: Record<string, number> | undefined;
+    let splitAmounts: Record<string, number> | null | undefined;
     if (splitMode === 'custom') {
       if (!isCustomSplitValid) {
         Alert.alert('Finance', 'Split amounts must add up to the total.');
@@ -412,6 +525,8 @@ export default function FinanceScreen() {
         acc[id] = Number.isFinite(value) ? value : 0;
         return acc;
       }, {});
+    } else if (editingTransaction?.splitAmounts) {
+      splitAmounts = null;
     }
 
     setSubmitting(true);
@@ -508,12 +623,15 @@ export default function FinanceScreen() {
     if (!houseId) return;
     try {
       setRefreshing(true);
-      const [updatedTransactions, updatedDebts] = await Promise.all([
+      const [updatedTransactions, updatedDebts, updatedSettlements] =
+        await Promise.all([
         financeService.getHouseTransactions(houseId),
         financeService.calculateDebts(houseId),
+        financeService.getHouseSettlements(houseId),
       ]);
       setTransactions(updatedTransactions);
       setDebts(updatedDebts);
+      setSettlements(updatedSettlements);
     } catch (err: any) {
       handleError(err, 'Unable to refresh finance data.');
     } finally {
@@ -526,6 +644,39 @@ export default function FinanceScreen() {
     const confirmedCount = transaction.confirmedBy?.length ?? 0;
     return totalParticipants > 0 && confirmedCount >= totalParticipants;
   }, []);
+
+  const activeTransactions = useMemo(
+    () => transactions.filter((transaction) => !isTransactionConfirmed(transaction)),
+    [transactions, isTransactionConfirmed]
+  );
+
+  const settledTransactions = useMemo(
+    () => transactions.filter((transaction) => isTransactionConfirmed(transaction)),
+    [transactions, isTransactionConfirmed]
+  );
+
+  useEffect(() => {
+    if (!focusTransactionId || !transactions.length) {
+      return;
+    }
+
+    const inActive = activeTransactions.some(
+      (transaction) => transaction.transactionId === focusTransactionId
+    );
+    const inSettled = settledTransactions.some(
+      (transaction) => transaction.transactionId === focusTransactionId
+    );
+
+    if (inSettled) {
+      setShowSettled(true);
+    }
+
+    if (inActive || inSettled) {
+      setHighlightTransactionId(focusTransactionId);
+      const timeout = setTimeout(() => setHighlightTransactionId(null), 3000);
+      return () => clearTimeout(timeout);
+    }
+  }, [focusTransactionId, transactions, activeTransactions, settledTransactions]);
 
   const getDebtStatus = useCallback(
     (debt: SimplifiedDebt) => {
@@ -543,26 +694,145 @@ export default function FinanceScreen() {
         };
       }
 
-      const allConfirmed = relatedTransactions.every((transaction) =>
-        isTransactionConfirmed(transaction)
+      const totalParticipants = relatedTransactions.reduce(
+        (sum, transaction) => sum + (transaction.splitWith?.length ?? 0),
+        0
+      );
+      const confirmedParticipants = relatedTransactions.reduce(
+        (sum, transaction) => sum + (transaction.confirmedBy?.length ?? 0),
+        0
       );
 
-      if (allConfirmed) {
+      if (totalParticipants > 0 && confirmedParticipants >= totalParticipants) {
         return {
-          label: 'Confirmed',
+          label: 'Acknowledged',
           backgroundColor: colors.successSoft,
           color: colors.success,
         };
       }
 
       return {
-        label: 'Pending confirmations',
+        label: `Confirmed ${confirmedParticipants}/${totalParticipants}`,
         backgroundColor: colors.warningSoft,
         color: colors.warning,
       };
     },
     [transactions, isTransactionConfirmed]
   );
+
+  const debtTransactions = useMemo(() => {
+    if (!selectedDebt) return [];
+    return activeTransactions.filter((transaction) => {
+      const splitWith = transaction.splitWith || [];
+      return (
+        transaction.payerId === selectedDebt.from ||
+        transaction.payerId === selectedDebt.to ||
+        splitWith.includes(selectedDebt.from) ||
+        splitWith.includes(selectedDebt.to)
+      );
+    });
+  }, [selectedDebt, activeTransactions]);
+
+  const openDebtDetail = (debt: SimplifiedDebt) => {
+    setSelectedDebt(debt);
+    setDebtDetailVisible(true);
+  };
+
+  const closeDebtDetail = () => {
+    setDebtDetailVisible(false);
+    setSelectedDebt(null);
+  };
+
+  const openContestModal = (transaction: TransactionData) => {
+    setContestingTransaction(transaction);
+    setContestReason(CONTEST_REASONS[0]);
+    setContestNote('');
+    setContestVisible(true);
+  };
+
+  const closeContestModal = () => {
+    if (submitting) return;
+    setContestVisible(false);
+    setContestingTransaction(null);
+  };
+
+  const handleContestSubmit = async () => {
+    if (!houseId || !currentUserId || !contestingTransaction) {
+      return;
+    }
+    try {
+      setSubmitting(true);
+      await financeService.contestTransaction(
+        houseId,
+        contestingTransaction.transactionId,
+        currentUserId,
+        contestReason,
+        contestNote
+      );
+      notifySuccess();
+      setContestVisible(false);
+      setContestingTransaction(null);
+    } catch (err: any) {
+      notifyError();
+      handleError(err, 'Unable to contest this transaction.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleViewContest = (transaction: TransactionData, memberId: string) => {
+    const note = transaction.contestNotes?.[memberId];
+    if (!note) {
+      Alert.alert('Contest', 'No contest details were provided.');
+      return;
+    }
+    const memberName = getMemberName(memberId);
+    Alert.alert(
+      'Contest details',
+      `${memberName} flagged this bill.\n\nReason: ${note.reason}${
+        note.note ? `\nNotes: ${note.note}` : ''
+      }`
+    );
+  };
+
+  const handleSettleDebt = async (debt: SimplifiedDebt) => {
+    if (!houseId || !currentUserId) return;
+    if (currentUserId !== debt.from) {
+      Alert.alert('Finance', 'Only the person who owes can mark this as paid.');
+      return;
+    }
+
+    Alert.alert(
+      'Settle up',
+      `Mark ${formatCurrency(debt.amount)} as paid to ${getMemberName(
+        debt.to,
+        debt.toName
+      )}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark Paid',
+          style: 'default',
+          onPress: async () => {
+            try {
+              await financeService.addSettlement(
+                houseId,
+                debt.from,
+                debt.to,
+                debt.amount,
+                currentUserId
+              );
+              notifySuccess();
+              loadDebts();
+            } catch (err: any) {
+              notifyError();
+              handleError(err, 'Unable to mark this debt as paid.');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const renderDebtSummary = () => {
     if (!isInHouse) return null;
@@ -588,6 +858,9 @@ export default function FinanceScreen() {
     return (
       <RNView style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Debt Summary</Text>
+        <Text style={styles.debtSummaryHint}>
+          Active transactions only. Tap a card for the breakdown.
+        </Text>
         {debts.map((debt) => {
           const isCurrentUserDebtor = debt.from === currentUserId;
           const isCurrentUserCreditor = debt.to === currentUserId;
@@ -605,8 +878,13 @@ export default function FinanceScreen() {
             ? colors.success
             : colors.accent;
           const status = getDebtStatus(debt);
+          const canSettle = currentUserId === debt.from;
           return (
-            <RNView key={`${debt.from}-${debt.to}`} style={styles.debtCard}>
+            <Pressable
+              key={`${debt.from}-${debt.to}`}
+              style={styles.debtCard}
+              onPress={() => openDebtDetail(debt)}
+            >
               <RNView style={styles.debtRow}>
                 <Text style={styles.debtLabel}>{label}</Text>
                 <Text style={[styles.debtAmount, { color: amountColor }]}>
@@ -614,29 +892,206 @@ export default function FinanceScreen() {
                 </Text>
               </RNView>
               <RNView style={styles.debtMetaRow}>
-                <RNView
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: status.backgroundColor },
-                  ]}
-                >
-                  <Text style={[styles.statusBadgeText, { color: status.color }]}>
-                    {status.label}
-                  </Text>
+                <RNView style={styles.debtMetaLeft}>
+                  <RNView
+                    style={[
+                      styles.statusBadge,
+                      { backgroundColor: status.backgroundColor },
+                    ]}
+                  >
+                    <Text style={[styles.statusBadgeText, { color: status.color }]}>
+                      {status.label}
+                    </Text>
+                  </RNView>
+                  {canSettle && (
+                    <TouchableOpacity
+                      style={styles.settleButton}
+                      onPress={() => handleSettleDebt(debt)}
+                    >
+                      <Text style={styles.settleButtonText}>Settle up</Text>
+                    </TouchableOpacity>
+                  )}
                 </RNView>
               </RNView>
-            </RNView>
+              <Text style={styles.debtBreakdownText}>View breakdown</Text>
+            </Pressable>
           );
         })}
       </RNView>
     );
   };
 
+  const renderDebtDetailModal = () => {
+    if (!selectedDebt) {
+      return null;
+    }
+
+    const fromName = getMemberName(selectedDebt.from, selectedDebt.fromName);
+    const toName = getMemberName(selectedDebt.to, selectedDebt.toName);
+    const pairNet = Number.isFinite(selectedDebt.amount) ? selectedDebt.amount : 0;
+    const fromBalance = -pairNet;
+    const toBalance = pairNet;
+
+    return (
+      <Modal
+        visible={debtDetailVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={closeDebtDetail}
+      >
+        <RNView style={styles.modalBackdrop}>
+          <RNView style={styles.debtDetailContent}>
+            <RNView style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Debt breakdown</Text>
+              <Pressable onPress={closeDebtDetail}>
+                <Text style={styles.modalCloseText}>Close</Text>
+              </Pressable>
+            </RNView>
+            <Text style={styles.debtDetailSubtitle}>
+              Net between you two, based on active transactions only.
+            </Text>
+
+            <RNView style={styles.balanceRow}>
+              <RNView style={styles.balanceItem}>
+                <Text style={styles.balanceLabel}>{fromName}</Text>
+                <Text
+                  style={[
+                    styles.balanceValue,
+                    fromBalance < 0 ? styles.balanceNegative : styles.balancePositive,
+                  ]}
+                >
+                  {formatSignedCurrency(fromBalance)}
+                </Text>
+              </RNView>
+              <RNView style={[styles.balanceItem, { marginRight: 0 }]}>
+                <Text style={styles.balanceLabel}>{toName}</Text>
+                <Text
+                  style={[
+                    styles.balanceValue,
+                    toBalance < 0 ? styles.balanceNegative : styles.balancePositive,
+                  ]}
+                >
+                  {formatSignedCurrency(toBalance)}
+                </Text>
+              </RNView>
+            </RNView>
+
+            <Text style={styles.debtDetailSectionTitle}>Transactions</Text>
+            <ScrollView contentContainerStyle={styles.debtDetailList}>
+              {debtTransactions.length === 0 ? (
+                <Text style={styles.emptyStateSubtitle}>
+                  No active transactions involving this pair.
+                </Text>
+              ) : (
+                debtTransactions.map((transaction) => {
+                  const { title, details } = splitDescription(transaction.description);
+                  const payerName = getMemberName(
+                    transaction.payerId,
+                    transaction.payerName
+                  );
+                  const splitWith = transaction.splitWith || [];
+                  const fromInvolved =
+                    transaction.payerId === selectedDebt.from ||
+                    splitWith.includes(selectedDebt.from);
+                  const toInvolved =
+                    transaction.payerId === selectedDebt.to ||
+                    splitWith.includes(selectedDebt.to);
+                  const fromImpact = getNetImpact(transaction, selectedDebt.from);
+                  const toImpact = getNetImpact(transaction, selectedDebt.to);
+                  const impactMap = getImpactMap(transaction);
+                  const othersTotal = roundCurrency(
+                    Object.entries(impactMap).reduce((sum, [userId, value]) => {
+                      if (userId === selectedDebt.from || userId === selectedDebt.to) {
+                        return sum;
+                      }
+                      return sum + value;
+                    }, 0)
+                  );
+
+                  return (
+                    <RNView
+                      key={transaction.transactionId}
+                      style={styles.debtDetailCard}
+                    >
+                      <Text style={styles.debtDetailTitle}>{title}</Text>
+                      {!!details && (
+                        <Text style={styles.debtDetailMeta}>{details}</Text>
+                      )}
+                      <Text style={styles.debtDetailMeta}>
+                        Paid by {payerName} - {formatCurrency(transaction.amount)}
+                      </Text>
+                      <RNView style={styles.debtDetailImpactRow}>
+                        {fromInvolved && (
+                          <RNView style={styles.debtDetailImpactItem}>
+                            <Text style={styles.debtDetailImpactLabel}>{fromName}</Text>
+                            <Text
+                              style={[
+                                styles.debtDetailImpactText,
+                                fromImpact < 0
+                                  ? styles.balanceNegative
+                                  : styles.balancePositive,
+                              ]}
+                            >
+                              {formatSignedCurrency(fromImpact)}
+                            </Text>
+                          </RNView>
+                        )}
+                        {Math.abs(othersTotal) > 0.009 && (
+                          <RNView style={styles.debtDetailImpactItem}>
+                            <Text
+                              style={[
+                                styles.debtDetailImpactLabel,
+                                styles.debtDetailOtherText,
+                              ]}
+                            >
+                              Others
+                            </Text>
+                            <Text
+                              style={[
+                                styles.debtDetailImpactText,
+                                styles.debtDetailOtherText,
+                                othersTotal < 0
+                                  ? styles.balanceNegative
+                                  : styles.balancePositive,
+                              ]}
+                            >
+                              {formatSignedCurrency(othersTotal)}
+                            </Text>
+                          </RNView>
+                        )}
+                        {toInvolved && (
+                          <RNView style={styles.debtDetailImpactItem}>
+                            <Text style={styles.debtDetailImpactLabel}>{toName}</Text>
+                            <Text
+                              style={[
+                                styles.debtDetailImpactText,
+                                toImpact < 0
+                                  ? styles.balanceNegative
+                                  : styles.balancePositive,
+                              ]}
+                            >
+                              {formatSignedCurrency(toImpact)}
+                            </Text>
+                          </RNView>
+                        )}
+                      </RNView>
+                    </RNView>
+                  );
+                })
+              )}
+            </ScrollView>
+          </RNView>
+        </RNView>
+      </Modal>
+    );
+  };
+
   const renderTransactionCard = ({ item }: { item: TransactionData }) => {
     const payerName = getMemberName(item.payerId, item.payerName);
     const splitMembers = item.splitWith || [];
-    const avatarsToShow = splitMembers.slice(0, 4);
-    const extraCount = Math.max(0, splitMembers.length - avatarsToShow.length);
+    const owingMembers = splitMembers.filter((memberId) => memberId !== item.payerId);
+    const avatarsToShow = owingMembers.slice(0, 4);
+    const extraCount = Math.max(0, owingMembers.length - avatarsToShow.length);
     const isConfirmed = isTransactionConfirmed(item);
     const isUserInSplit =
       !!currentUserId && (item.splitWith || []).includes(currentUserId);
@@ -645,7 +1100,29 @@ export default function FinanceScreen() {
     const needsUserConfirmation = isUserInSplit && !hasUserConfirmed;
     const isPayer = item.payerId === currentUserId;
     const ageDays = getAgeInDays(item.createdAt);
-    const urgencyTone = getUrgencyTone(ageDays, isConfirmed);
+    const urgencyTone = getUrgencyTone(ageDays);
+    const urgencyDisplay = isContested
+      ? { ...urgencyTone, color: colors.danger, background: colors.dangerSoft }
+      : urgencyTone;
+    const isRecent = ageDays < 1 && !isConfirmed;
+    const showUrgency = !isConfirmed && ageDays >= 3;
+    const contestedCount = item.contestedBy?.length ?? 0;
+    const isContested = contestedCount > 0;
+    const ringColor = isContested
+      ? colors.warning
+      : isConfirmed
+      ? colors.success
+      : ageDays >= 7
+      ? colors.danger
+      : ageDays >= 3
+      ? colors.warning
+      : colors.accentMuted;
+    const hasUserContested =
+      !!currentUserId && (item.contestedBy || []).includes(currentUserId);
+    const isHighlighted = highlightTransactionId === item.transactionId;
+
+    const totalParticipants = item.splitWith?.length ?? 0;
+    const confirmedCount = item.confirmedBy?.length ?? 0;
 
     let badgeLabel = 'Pending';
     let badgeBackground = colors.accentSoft;
@@ -656,18 +1133,76 @@ export default function FinanceScreen() {
       badgeBackground = colors.successSoft;
       badgeColor = colors.success;
     } else if (needsUserConfirmation) {
-      badgeLabel = 'Needs your confirmation';
+      badgeLabel = `Confirmed ${confirmedCount}/${totalParticipants}`;
       badgeBackground = colors.dangerSoft;
       badgeColor = colors.danger;
     } else if (isPayer) {
-      badgeLabel = 'Waiting on confirmations';
+      badgeLabel = `Confirmed ${confirmedCount}/${totalParticipants}`;
+      badgeBackground = colors.warningSoft;
+      badgeColor = colors.warning;
+    } else if (totalParticipants > 0) {
+      badgeLabel = `Confirmed ${confirmedCount}/${totalParticipants}`;
       badgeBackground = colors.warningSoft;
       badgeColor = colors.warning;
     }
 
     return (
-      <RNView style={[styles.transactionCard, { borderLeftColor: urgencyTone.color }]}>
+        <RNView
+        style={[
+          styles.transactionCard,
+          isContested && styles.transactionCardContested,
+          isHighlighted && styles.transactionCardHighlighted,
+          {
+            borderColor: ringColor,
+            borderWidth: 2,
+          },
+        ]}
+      >
+          {!isContested && <RNView style={styles.receiptNotchLeft} />}
+          {!isContested && <RNView style={styles.receiptNotchRight} />}
         <RNView style={styles.transactionHeader}>
+          <RNView style={styles.transactionHeaderLeft}>
+            {memberPhotoMap.get(item.payerId) ? (
+              <Image
+                source={{ uri: memberPhotoMap.get(item.payerId) as string }}
+                style={styles.payerAvatarLarge}
+              />
+            ) : (
+              <RNView
+                style={[
+                  styles.payerAvatarLarge,
+                  styles.payerAvatarFallback,
+                  { backgroundColor: getFallbackColor(item.payerId) },
+                ]}
+              >
+                <Text style={styles.payerAvatarText}>{getInitial(payerName)}</Text>
+              </RNView>
+            )}
+            <RNView style={styles.transactionMetaBlock}>
+              <RNView style={styles.transactionTitleRow}>
+                <Text
+                  style={styles.transactionReceiptTitle}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {item.description || 'Shared expense'}
+                </Text>
+                {(isRecent || showUrgency) && (
+                  <RNView
+                    style={[
+                      styles.urgencyBadge,
+                      { backgroundColor: urgencyDisplay.background },
+                    ]}
+                  >
+                    <Text style={[styles.urgencyBadgeText, { color: urgencyDisplay.color }]}>
+                      {urgencyDisplay.label}
+                    </Text>
+                  </RNView>
+                )}
+              </RNView>
+              <Text style={styles.transactionPayerLine}>{payerName} paid for</Text>
+            </RNView>
+          </RNView>
           <Text
             style={[
               styles.transactionAmount,
@@ -678,30 +1213,50 @@ export default function FinanceScreen() {
           </Text>
         </RNView>
 
-        <RNView style={styles.transactionMidRow}>
-          <RNView style={styles.transactionMetaBlock}>
-            <Text style={styles.transactionTitle}>{payerName} paid for</Text>
-            <Text style={styles.transactionMeta}>
-              {item.description || 'Shared expense'}
-            </Text>
-          </RNView>
+        <RNView style={styles.owingRow}>
           <RNView style={styles.avatarStack}>
             {avatarsToShow.map((memberId, index) => {
               const name = getMemberName(memberId);
               const photoUrl = memberPhotoMap.get(memberId) ?? null;
               const fallbackColor = getFallbackColor(memberId);
+              const memberConfirmed = (item.confirmedBy || []).includes(memberId);
+              const memberContested = (item.contestedBy || []).includes(memberId);
+              const showSettledTick = isConfirmed;
               return (
                 <RNView
                   key={`${item.transactionId}-${memberId}`}
                   style={[
                     styles.avatarChip,
-                    { marginLeft: index === 0 ? 0 : -8, backgroundColor: fallbackColor },
+                    memberConfirmed && styles.avatarConfirmed,
+                    memberContested && styles.avatarContested,
+                    { marginLeft: index === 0 ? 0 : -8 },
                   ]}
                 >
-                  {photoUrl ? (
-                    <Image source={{ uri: photoUrl }} style={styles.avatarImage} />
-                  ) : (
-                    <Text style={styles.avatarText}>{getInitial(name)}</Text>
+                  <RNView
+                    style={[
+                      styles.avatarInner,
+                      !photoUrl && { backgroundColor: fallbackColor },
+                    ]}
+                  >
+                    {photoUrl ? (
+                      <Image source={{ uri: photoUrl }} style={styles.avatarImage} />
+                    ) : (
+                      <Text style={styles.avatarText}>{getInitial(name)}</Text>
+                    )}
+                  </RNView>
+                  {showSettledTick && (
+                    <RNView style={styles.avatarTick}>
+                      <FontAwesome name="check" size={8} color={colors.onAccent} />
+                    </RNView>
+                  )}
+                  {memberContested && (
+                    <Pressable
+                      style={styles.avatarAlert}
+                      onPress={() => handleViewContest(item, memberId)}
+                      hitSlop={6}
+                    >
+                      <FontAwesome name="exclamation" size={9} color={colors.onAccent} />
+                    </Pressable>
                   )}
                 </RNView>
               );
@@ -711,23 +1266,32 @@ export default function FinanceScreen() {
                 <Text style={styles.avatarOverflowText}>+{extraCount}</Text>
               </RNView>
             )}
+            {owingMembers.length === 0 && (
+              <RNView style={styles.owingEmpty}>
+                <Text style={styles.owingEmptyText}>Only you</Text>
+              </RNView>
+            )}
           </RNView>
         </RNView>
 
         <RNView style={styles.transactionMetaRow}>
           <Text style={styles.transactionMeta}>{formatDateTime(item.createdAt)}</Text>
-          <RNView style={[styles.urgencyBadge, { backgroundColor: urgencyTone.background }]}>
-            <Text style={[styles.urgencyBadgeText, { color: urgencyTone.color }]}>
-              {urgencyTone.label}
-            </Text>
-          </RNView>
         </RNView>
 
+        <RNView style={styles.receiptDivider} />
+
         <RNView style={styles.transactionFooter}>
-          <RNView style={[styles.statusBadge, { backgroundColor: badgeBackground }]}>
-            <Text style={[styles.statusBadgeText, { color: badgeColor }]}>
-              {badgeLabel}
-            </Text>
+          <RNView style={styles.footerBadges}>
+            <RNView style={[styles.statusBadge, { backgroundColor: badgeBackground }]}>
+              <Text style={[styles.statusBadgeText, { color: badgeColor }]}>
+                {badgeLabel}
+              </Text>
+              {isContested && (
+                <RNView style={styles.statusBadgeAlert}>
+                  <FontAwesome name="exclamation" size={11} color={colors.onAccent} />
+                </RNView>
+              )}
+            </RNView>
           </RNView>
           <RNView style={styles.transactionActions}>
             {needsUserConfirmation && (
@@ -738,7 +1302,7 @@ export default function FinanceScreen() {
                 <Text style={styles.confirmButtonText}>Confirm</Text>
               </TouchableOpacity>
             )}
-            {isPayer && (
+            {isPayer && !isConfirmed && (
               <TouchableOpacity
                 style={styles.editButton}
                 onPress={() => openEditModal(item)}
@@ -746,12 +1310,32 @@ export default function FinanceScreen() {
                 <Text style={styles.editButtonText}>Edit</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => handleDeleteTransaction(item)}
-            >
-              <Text style={styles.deleteButtonText}>Delete</Text>
-            </TouchableOpacity>
+            {isPayer && !isConfirmed ? (
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => handleDeleteTransaction(item)}
+              >
+                <Text style={styles.deleteButtonText}>Delete</Text>
+              </TouchableOpacity>
+            ) : !isConfirmed && !hasUserConfirmed ? (
+              <TouchableOpacity
+                style={[
+                  styles.contestButton,
+                  hasUserContested && styles.contestButtonDisabled,
+                ]}
+                onPress={() => openContestModal(item)}
+                disabled={hasUserContested}
+              >
+                <Text
+                  style={[
+                    styles.contestButtonText,
+                    hasUserContested && styles.contestButtonTextDisabled,
+                  ]}
+                >
+                  {hasUserContested ? 'Contested' : 'Contest'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </RNView>
         </RNView>
       </RNView>
@@ -1068,14 +1652,6 @@ export default function FinanceScreen() {
     );
   }
 
-  const activeTransactions = transactions.filter((transaction) => {
-    const confirmed = isTransactionConfirmed(transaction);
-    return !confirmed;
-  });
-  const settledTransactions = transactions.filter((transaction) =>
-    isTransactionConfirmed(transaction)
-  );
-
   return (
     <ScreenShell style={styles.container}>
       <Animated.FlatList
@@ -1092,10 +1668,10 @@ export default function FinanceScreen() {
             <Text style={styles.title}>Finance</Text>
             {renderDebtSummary()}
             <RNView style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Active Transactions</Text>
-              <Text style={styles.sectionSubtitle}>
-                Waiting on confirmations or payments.
-              </Text>
+            <Text style={styles.sectionTitle}>Transactions</Text>
+            <Text style={styles.sectionSubtitle}>
+              Confirm when you acknowledge a bill.
+            </Text>
             </RNView>
           </RNView>
         }
@@ -1108,7 +1684,7 @@ export default function FinanceScreen() {
               onPress={() => setShowSettled((prev) => !prev)}
             >
               <Text style={styles.sectionTitle}>
-                Settled Transactions ({settledTransactions.length})
+                Confirmed Transactions ({settledTransactions.length})
               </Text>
               <Text style={styles.settledToggleText}>
                 {showSettled ? 'Hide' : 'Show'}
@@ -1152,7 +1728,87 @@ export default function FinanceScreen() {
         <Text style={styles.stickyHeaderTitle}>Finance</Text>
       </Animated.View>
 
+      {renderDebtDetailModal()}
       {renderModal()}
+      {contestVisible && (
+        <Modal
+          visible={contestVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={closeContestModal}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <KeyboardAvoidingView
+              style={styles.modalBackdrop}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            >
+              <RNView style={styles.modalContent}>
+                <ScrollView contentContainerStyle={styles.modalScrollContent}>
+                  <Text style={styles.modalTitle}>Contest charge</Text>
+                  <Text style={styles.modalHelperText}>
+                    Tell the payer what needs fixing. This does not delete the bill.
+                  </Text>
+
+                  <Text style={styles.modalLabel}>Reason</Text>
+                  <RNView style={styles.dropdownContainer}>
+                    {CONTEST_REASONS.map((reason) => (
+                      <Pressable
+                        key={reason}
+                        style={[
+                          styles.dropdownChip,
+                          contestReason === reason && styles.dropdownChipActive,
+                        ]}
+                        onPress={() => setContestReason(reason)}
+                      >
+                        <Text
+                          style={[
+                            styles.dropdownChipText,
+                            contestReason === reason &&
+                              styles.dropdownChipTextActive,
+                          ]}
+                        >
+                          {reason}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </RNView>
+
+                  <Text style={styles.modalLabel}>Notes (optional)</Text>
+                  <TextInput
+                    style={[styles.input, styles.inputMultiline]}
+                    placeholder="Add a short note for the payer"
+                    placeholderTextColor={colors.muted}
+                    value={contestNote}
+                    onChangeText={setContestNote}
+                    multiline
+                  />
+
+                  <RNView style={styles.modalActionsRow}>
+                    <TouchableOpacity
+                      style={[styles.modalButton, styles.modalCancelButton]}
+                      onPress={closeContestModal}
+                      disabled={submitting}
+                    >
+                      <Text style={styles.modalCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.modalButton, styles.modalPrimaryButton]}
+                      onPress={handleContestSubmit}
+                      disabled={submitting}
+                    >
+                      {submitting ? (
+                        <ActivityIndicator color={colors.onAccent} />
+                      ) : (
+                        <Text style={styles.modalPrimaryText}>Send</Text>
+                      )}
+                    </TouchableOpacity>
+                  </RNView>
+                </ScrollView>
+              </RNView>
+            </KeyboardAvoidingView>
+          </TouchableWithoutFeedback>
+        </Modal>
+      )}
 
       {loading && (
         <RNView style={styles.loadingOverlay}>
@@ -1220,6 +1876,11 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.accent,
     marginBottom: 12,
   },
+  debtSummaryHint: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 12,
+  },
   sectionSubtitle: {
     fontSize: 13,
     color: colors.muted,
@@ -1255,11 +1916,22 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  debtMetaLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  debtBreakdownText: {
+    fontSize: 11,
+    color: colors.muted,
+    fontWeight: '600',
+    marginTop: 8,
+  },
   settleButton: {
     backgroundColor: colors.accent,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
+    marginLeft: 8,
   },
   settleButtonText: {
     color: colors.onAccent,
@@ -1267,23 +1939,39 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontWeight: '600',
   },
   transactionCard: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.surface,
     borderRadius: BORDER_RADIUS,
     padding: 16,
     marginBottom: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.border,
+    borderWidth: 1,
+    borderColor: colors.border,
     shadowColor: '#000',
     shadowOpacity: 0.06,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
+  transactionCardContested: {
+    borderWidth: 2,
+    borderColor: colors.warning,
+  },
+  transactionCardHighlighted: {
+    shadowColor: colors.accent,
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 4,
+  },
   transactionHeader: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 8,
+  },
+  transactionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    paddingRight: 12,
   },
   transactionMidRow: {
     flexDirection: 'row',
@@ -1293,7 +1981,11 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   transactionMetaBlock: {
     flex: 1,
-    paddingRight: 12,
+  },
+  transactionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
   },
   transactionTitle: {
     fontSize: 16,
@@ -1301,13 +1993,39 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.accent,
     marginBottom: 4,
   },
+  transactionReceiptTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.accent,
+    letterSpacing: 0.2,
+    flex: 1,
+  },
+  transactionPayerLine: {
+    fontSize: 13,
+    color: colors.muted,
+    fontWeight: '600',
+  },
+  payerAvatarLarge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 10,
+  },
+  payerAvatarFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  payerAvatarText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.onAccent,
+  },
   transactionAmount: {
     fontSize: 16,
     fontWeight: '700',
     color: colors.accent,
   },
   transactionAmountSettled: {
-    textDecorationLine: 'line-through',
     color: colors.muted,
   },
   transactionMeta: {
@@ -1321,11 +2039,36 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     alignItems: 'center',
     marginTop: 6,
   },
+  receiptNotchLeft: {
+    position: 'absolute',
+    left: -8,
+    top: 56,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.background,
+  },
+  receiptNotchRight: {
+    position: 'absolute',
+    right: -8,
+    top: 56,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.background,
+  },
+  receiptDivider: {
+    borderTopWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
+    marginVertical: 10,
+  },
   urgencyBadge: {
     alignSelf: 'flex-start',
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
+    marginLeft: 8,
   },
   urgencyBadgeText: {
     fontSize: 11,
@@ -1337,6 +2080,11 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  footerBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
   transactionActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1344,6 +2092,22 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   avatarStack: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  owingRow: {
+    alignItems: 'flex-end',
+    marginBottom: 6,
+  },
+  owingEmpty: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: colors.accentSoft,
+    marginLeft: 6,
+  },
+  owingEmptyText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.accent,
   },
   avatarChip: {
     width: 28,
@@ -1353,11 +2117,31 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     borderColor: colors.card,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+    overflow: 'visible',
+    backgroundColor: colors.card,
+  },
+  avatarConfirmed: {
+    borderColor: colors.success,
+    borderWidth: 2,
+  },
+  avatarContested: {
+    borderColor: colors.warning,
+    borderWidth: 2,
+  },
+  avatarInner: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
     overflow: 'hidden',
+    backgroundColor: colors.surface,
   },
   avatarImage: {
-    width: 28,
-    height: 28,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
   },
   avatarText: {
     fontSize: 11,
@@ -1372,14 +2156,55 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontWeight: '700',
     color: colors.accent,
   },
+  avatarTick: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: colors.success,
+    borderWidth: 1,
+    borderColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 3,
+  },
+  avatarAlert: {
+    position: 'absolute',
+    right: -2,
+    top: -2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: colors.warning,
+    borderWidth: 1,
+    borderColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 4,
+  },
   statusBadge: {
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   statusBadgeText: {
     fontSize: 11,
     fontWeight: '600',
+  },
+  statusBadgeAlert: {
+    marginLeft: 6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.warning,
+    borderWidth: 1,
+    borderColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   settledSection: {
     marginTop: 12,
@@ -1427,6 +2252,23 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.danger,
     fontSize: 12,
     fontWeight: '600',
+  },
+  contestButton: {
+    backgroundColor: colors.warningSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  contestButtonDisabled: {
+    opacity: 0.6,
+  },
+  contestButtonText: {
+    color: colors.warning,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  contestButtonTextDisabled: {
+    color: colors.muted,
   },
   editButton: {
     backgroundColor: colors.accentSoft,
@@ -1510,6 +2352,99 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontSize: 13,
     color: colors.muted,
   },
+  debtDetailContent: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 24,
+    maxHeight: '85%',
+  },
+  debtDetailSubtitle: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 16,
+  },
+  balanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  balanceItem: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    padding: 12,
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  balanceLabel: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 6,
+  },
+  balanceValue: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  balanceNegative: {
+    color: colors.danger,
+  },
+  balancePositive: {
+    color: colors.success,
+  },
+  debtDetailSectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+    marginBottom: 8,
+  },
+  debtDetailList: {
+    paddingBottom: 12,
+  },
+  debtDetailCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  debtDetailTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+    marginBottom: 4,
+  },
+  debtDetailMeta: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  debtDetailImpactRow: {
+    flexDirection: 'column',
+    marginTop: 6,
+  },
+  debtDetailImpactItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  debtDetailImpactLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.accent,
+    marginRight: 12,
+  },
+  debtDetailImpactText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  debtDetailOtherText: {
+    color: colors.muted,
+  },
   stepLabel: {
     fontSize: 12,
     color: colors.muted,
@@ -1566,6 +2501,10 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.accent,
     backgroundColor: colors.card,
   },
+  inputMultiline: {
+    height: 84,
+    textAlignVertical: 'top',
+  },
   dropdownContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1581,6 +2520,10 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   dropdownChipActive: {
     backgroundColor: colors.accent,
+  },
+  dropdownChipText: {
+    fontSize: 13,
+    color: colors.muted,
   },
   dropdownChipTextActive: {
     color: colors.onAccent,
