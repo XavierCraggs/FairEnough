@@ -33,6 +33,38 @@ import {
 
   const addDays = (date: Date, days: number) =>
     new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+
+  const addMonths = (date: Date, months: number) => {
+    const year = date.getFullYear();
+    const month = date.getMonth() + months;
+    const day = date.getDate();
+    const firstOfTargetMonth = new Date(year, month, 1);
+    const lastDay = new Date(
+      firstOfTargetMonth.getFullYear(),
+      firstOfTargetMonth.getMonth() + 1,
+      0
+    ).getDate();
+    return new Date(
+      firstOfTargetMonth.getFullYear(),
+      firstOfTargetMonth.getMonth(),
+      Math.min(day, lastDay)
+    );
+  };
+
+  const buildLastCompletedMap = (chores: ChoreData[]) => {
+    const map = new Map<string, number>();
+    chores.forEach((chore) => {
+      if (!chore.lastCompletedBy || !chore.lastCompletedAt?.toDate) {
+        return;
+      }
+      const completedAt = chore.lastCompletedAt.toDate().getTime();
+      const current = map.get(chore.lastCompletedBy) ?? 0;
+      if (completedAt > current) {
+        map.set(chore.lastCompletedBy, completedAt);
+      }
+    });
+    return map;
+  };
   
   /**
    * Chore data structure stored in Firestore
@@ -44,7 +76,7 @@ import {
     description?: string;
     points: number;
     assignedTo: string | null; // UID of assigned user, null if unassigned
-    frequency: 'daily' | 'weekly' | 'one-time';
+    frequency: 'daily' | 'weekly' | 'monthly' | 'one-time';
     status: 'pending' | 'completed' | 'overdue';
     lastCompletedBy: string | null; // UID of last user who completed it
     lastCompletedAt: Timestamp | null;
@@ -74,7 +106,8 @@ import {
     description?: string;
     points: number;
     assignedTo?: string | null;
-    frequency: 'daily' | 'weekly' | 'one-time';
+    frequency: 'daily' | 'weekly' | 'monthly' | 'one-time';
+    dueDate?: Date;
     createdBy: string;
   }
   
@@ -127,6 +160,7 @@ import {
         // Create chore document
         const choreRef = collection(db, 'houses', input.houseId, 'chores');
         const now = new Date();
+        const dueDate = input.dueDate ? startOfDay(input.dueDate) : startOfDay(now);
         const newChore = {
           houseId: input.houseId,
           title: input.title.trim(),
@@ -137,7 +171,7 @@ import {
           status: 'pending' as const,
           lastCompletedBy: null,
           lastCompletedAt: null,
-          nextDueAt: Timestamp.fromDate(startOfDay(now)),
+          nextDueAt: Timestamp.fromDate(dueDate),
           totalCompletions: 0,
           createdBy: input.createdBy,
           createdAt: serverTimestamp(),
@@ -405,7 +439,11 @@ import {
     async updateChore(
       houseId: string,
       choreId: string,
-      updates: Partial<Pick<ChoreData, 'title' | 'description' | 'points' | 'frequency'>>,
+      updates: Partial<
+        Pick<ChoreData, 'title' | 'description' | 'points' | 'frequency'> & {
+          dueDate?: Date;
+        }
+      >,
       userId: string
     ): Promise<void> {
       try {
@@ -425,7 +463,9 @@ import {
           updatedAt: serverTimestamp(),
         };
 
-        if (updates.frequency) {
+        if (updates.dueDate) {
+          patch.nextDueAt = Timestamp.fromDate(startOfDay(updates.dueDate));
+        } else if (updates.frequency) {
           const choreDoc = await getDoc(choreRef);
           const chore = choreDoc.data() as ChoreData | undefined;
           const referenceDate =
@@ -446,19 +486,19 @@ import {
       }
     }
   
-    /**
-     * Delete a chore
-     * 
-     * @param houseId - ID of the house
-     * @param choreId - ID of the chore to delete
-     * @param userId - UID of user deleting the chore
-     * @throws ChoreServiceError on failure
-     */
-    async deleteChore(
-      houseId: string,
-      choreId: string,
-      userId: string
-    ): Promise<void> {
+  /**
+   * Delete a chore
+   * 
+   * @param houseId - ID of the house
+   * @param choreId - ID of the chore to delete
+   * @param userId - UID of user deleting the chore
+   * @throws ChoreServiceError on failure
+   */
+  async deleteChore(
+    houseId: string,
+    choreId: string,
+    userId: string
+  ): Promise<void> {
       try {
         // Verify user is in the house
         await this.verifyUserInHouse(userId, houseId);
@@ -655,30 +695,44 @@ import {
         const since = addDays(new Date(), -ROLLING_WINDOW_DAYS);
         const pointsMap = await this.getRollingPointsMap(houseId, since);
         const chores = await this.getHouseChores(houseId);
+        const orderedMembers = [...members].sort((a, b) => a.localeCompare(b));
         const assignmentLoad = buildAssignmentLoad(chores);
+        const lastCompletedMap = buildLastCompletedMap(chores);
         const today = startOfDay(new Date());
 
         const batch = writeBatch(db);
         let updates = 0;
 
-        chores.forEach((chore) => {
+        const choresWithDue = chores.map((chore) => {
+          const dueDate = this.getChoreDueDate(chore, today);
+          const isDue = dueDate ? dueDate <= today : chore.status !== 'completed';
+          return { chore, dueDate, isDue };
+        });
+
+        choresWithDue
+          .sort((a, b) => {
+            const aCreated = a.chore.createdAt?.toDate
+              ? a.chore.createdAt.toDate().getTime()
+              : 0;
+            const bCreated = b.chore.createdAt?.toDate
+              ? b.chore.createdAt.toDate().getTime()
+              : 0;
+            if (aCreated !== bCreated) return aCreated - bCreated;
+            return a.chore.choreId.localeCompare(b.chore.choreId);
+          })
+          .forEach(({ chore, dueDate, isDue }) => {
           if (chore.frequency === 'one-time' && chore.status === 'completed') {
             return;
           }
 
-          const dueDate = this.getChoreDueDate(chore, today);
-          const isDue = dueDate ? dueDate <= today : chore.status !== 'completed';
-
-          const shouldKeepManualAssignment =
-            !!chore.assignedTo && !chore.lastCompletedAt;
-
-          const shouldAssign = isDue && !shouldKeepManualAssignment;
+          const shouldAssign = isDue && !chore.assignedTo;
           const targetAssignee = shouldAssign
             ? this.pickFairAssigneeFromList(
-                members,
+                orderedMembers,
                 pointsMap,
                 assignmentLoad,
-                chore.lastCompletedBy ?? null
+                chore.lastCompletedBy ?? null,
+                lastCompletedMap
               )
             : chore.assignedTo;
 
@@ -748,11 +802,13 @@ import {
       const pointsMap = await this.getRollingPointsMap(houseId, since);
       const chores = await this.getHouseChores(houseId);
       const assignmentLoad = buildAssignmentLoad(chores);
+      const lastCompletedMap = buildLastCompletedMap(chores);
       const target = this.pickFairAssigneeFromList(
         members,
         pointsMap,
         assignmentLoad,
-        options?.excludeUserId ?? null
+        options?.excludeUserId ?? null,
+        lastCompletedMap
       );
       if (!target) return;
 
@@ -766,6 +822,32 @@ import {
         assignedTo: target,
         updatedAt: serverTimestamp(),
       });
+    }
+
+    /**
+     * End a recurring chore series (keeps history, stops future repeats)
+     */
+    async endChoreSeries(
+      houseId: string,
+      choreId: string,
+      userId: string
+    ): Promise<void> {
+      try {
+        await this.verifyUserInHouse(userId, houseId);
+        const choreRef = doc(db, 'houses', houseId, 'chores', choreId);
+        await updateDoc(choreRef, {
+          frequency: 'one-time',
+          status: 'completed',
+          nextDueAt: null,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (error) {
+        throw this.createError(
+          ChoreServiceErrorCode.TRANSACTION_FAILED,
+          'Failed to end chore series. Please try again.',
+          error
+        );
+      }
     }
 
     async notifyOverdueChores(houseId: string, userId: string): Promise<void> {
@@ -829,6 +911,9 @@ import {
       if (frequency === 'weekly') {
         return Timestamp.fromDate(addDays(base, 7));
       }
+      if (frequency === 'monthly') {
+        return Timestamp.fromDate(addMonths(base, 1));
+      }
       return null;
     }
 
@@ -841,8 +926,15 @@ import {
       }
       if (chore.lastCompletedAt?.toDate) {
         const lastCompleted = startOfDay(chore.lastCompletedAt.toDate());
-        const daysToAdd = chore.frequency === 'daily' ? 1 : 7;
-        return addDays(lastCompleted, daysToAdd);
+        if (chore.frequency === 'daily') {
+          return addDays(lastCompleted, 1);
+        }
+        if (chore.frequency === 'weekly') {
+          return addDays(lastCompleted, 7);
+        }
+        if (chore.frequency === 'monthly') {
+          return addMonths(lastCompleted, 1);
+        }
       }
       if (chore.createdAt?.toDate) {
         return startOfDay(chore.createdAt.toDate());
@@ -889,9 +981,16 @@ import {
       members: string[],
       pointsMap: Map<string, number>,
       assignmentLoad: Map<string, { count: number; points: number }>,
-      excludeUserId: string | null
+      excludeUserId: string | null,
+      lastCompletedMap?: Map<string, number>
     ): string | null {
-      return selectFairAssignee(members, pointsMap, assignmentLoad, excludeUserId);
+      return selectFairAssignee(
+        members,
+        pointsMap,
+        assignmentLoad,
+        excludeUserId,
+        lastCompletedMap
+      );
     }
 
     private async pickFairAssignee(
@@ -904,11 +1003,13 @@ import {
       const pointsMap = await this.getRollingPointsMap(houseId, since);
       const chores = await this.getHouseChores(houseId);
       const assignmentLoad = buildAssignmentLoad(chores);
+      const lastCompletedMap = buildLastCompletedMap(chores);
       return this.pickFairAssigneeFromList(
         members,
         pointsMap,
         assignmentLoad,
-        excludeUserId
+        excludeUserId,
+        lastCompletedMap
       );
     }
   
@@ -968,6 +1069,6 @@ import {
       return error && typeof error.code === 'string' && typeof error.message === 'string';
     }
   }
-  
+
   // Export singleton instance
   export default new ChoreService();

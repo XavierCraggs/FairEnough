@@ -183,6 +183,23 @@ export default function DashboardScreen() {
   const startOfDay = (date: Date) =>
     new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
+  const addMonths = (date: Date, months: number) => {
+    const year = date.getFullYear();
+    const month = date.getMonth() + months;
+    const day = date.getDate();
+    const firstOfTargetMonth = new Date(year, month, 1);
+    const lastDay = new Date(
+      firstOfTargetMonth.getFullYear(),
+      firstOfTargetMonth.getMonth() + 1,
+      0
+    ).getDate();
+    return new Date(
+      firstOfTargetMonth.getFullYear(),
+      firstOfTargetMonth.getMonth(),
+      Math.min(day, lastDay)
+    );
+  };
+
   const getChoreDueDate = (chore: ChoreData, referenceDate: Date) => {
     if (chore.nextDueAt?.toDate) {
       return startOfDay(chore.nextDueAt.toDate());
@@ -192,12 +209,23 @@ export default function DashboardScreen() {
     }
     if (chore.lastCompletedAt?.toDate) {
       const lastCompleted = startOfDay(chore.lastCompletedAt.toDate());
-      const daysToAdd = chore.frequency === 'daily' ? 1 : 7;
-      return new Date(
-        lastCompleted.getFullYear(),
-        lastCompleted.getMonth(),
-        lastCompleted.getDate() + daysToAdd
-      );
+      if (chore.frequency === 'daily') {
+        return new Date(
+          lastCompleted.getFullYear(),
+          lastCompleted.getMonth(),
+          lastCompleted.getDate() + 1
+        );
+      }
+      if (chore.frequency === 'weekly') {
+        return new Date(
+          lastCompleted.getFullYear(),
+          lastCompleted.getMonth(),
+          lastCompleted.getDate() + 7
+        );
+      }
+      if (chore.frequency === 'monthly') {
+        return addMonths(lastCompleted, 1);
+      }
     }
     if (chore.createdAt?.toDate) {
       return startOfDay(chore.createdAt.toDate());
@@ -236,6 +264,11 @@ export default function DashboardScreen() {
       if (!lastCompleted) return true;
       const nextDue = new Date(lastCompleted);
       nextDue.setDate(nextDue.getDate() + 7);
+      return nextDue < startOfToday;
+    }
+    if (chore.frequency === 'monthly') {
+      if (!lastCompleted) return true;
+      const nextDue = addMonths(startOfDay(lastCompleted), 1);
       return nextDue < startOfToday;
     }
     if (chore.frequency === 'one-time') {
@@ -287,20 +320,33 @@ export default function DashboardScreen() {
 
   const handleOpenAlfredModal = () => {
     setAlfredModalVisible(true);
-    unreadNotifications.forEach((notification) => {
-      markAsRead(notification.notificationId);
-    });
   };
 
   const handleNotificationPress = (notification: any) => {
     if (!notification) return;
     markAsRead(notification.notificationId);
-    if (notification.type === 'BILL_CONTESTED' && notification.metadata?.transactionId) {
-      setAlfredModalVisible(false);
+    setAlfredModalVisible(false);
+    if (notification.type === 'CHORE_DUE') {
+      router.push({
+        pathname: '/(tabs)/chores',
+        params: notification.metadata?.choreId
+          ? { focusChoreId: notification.metadata.choreId }
+          : undefined,
+      });
+      return;
+    }
+    if (
+      (notification.type === 'BILL_CONTESTED' || notification.type === 'BILL_ADDED') &&
+      notification.metadata?.transactionId
+    ) {
       router.push({
         pathname: '/(tabs)/finance',
         params: { focusTransactionId: notification.metadata.transactionId },
       });
+      return;
+    }
+    if (notification.type === 'MEETING_REQUEST') {
+      router.push('/(tabs)/calendar');
     }
   };
 
@@ -415,6 +461,24 @@ export default function DashboardScreen() {
     return 'Just now';
   };
 
+  const formatNotificationDay = (createdAt: any) => {
+    if (!createdAt?.toDate) return 'Earlier';
+    const date = createdAt.toDate();
+    const today = new Date();
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffDays = Math.round(
+      (startOfToday.getTime() - startOfDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    return startOfDate.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
   const formatNotificationType = (type: string) => {
     const labels: Record<string, string> = {
       CHORE_DUE: 'Chore update',
@@ -428,6 +492,74 @@ export default function DashboardScreen() {
       .replace(/_/g, ' ')
       .toLowerCase()
       .replace(/\b\w/g, (match) => match.toUpperCase());
+  };
+
+  const getNotificationTone = (type: string) => {
+    switch (type) {
+      case 'CHORE_DUE':
+        return {
+          icon: 'check-circle' as const,
+          accent: colors.infoSoft,
+          stripe: colors.accent,
+        };
+      case 'BILL_ADDED':
+        return {
+          icon: 'credit-card' as const,
+          accent: colors.warningSoft,
+          stripe: colors.warning,
+        };
+      case 'BILL_CONTESTED':
+        return {
+          icon: 'exclamation-circle' as const,
+          accent: colors.dangerSoft,
+          stripe: colors.danger,
+        };
+      case 'NUDGE':
+        return {
+          icon: 'bell' as const,
+          accent: colors.accentSoft,
+          stripe: colors.accent,
+        };
+      case 'MEETING_REQUEST':
+        return {
+          icon: 'calendar' as const,
+          accent: colors.infoSoft,
+          stripe: colors.accent,
+        };
+      default:
+        return {
+          icon: 'inbox' as const,
+          accent: colors.surface,
+          stripe: colors.border,
+        };
+    }
+  };
+
+  const groupedNotifications = useMemo(() => {
+    const groups = new Map<string, { label: string; items: any[] }>();
+    notifications.forEach((notification) => {
+      const label = formatNotificationDay(notification.createdAt);
+      const dateKey = notification.createdAt?.toDate
+        ? new Date(
+            notification.createdAt.toDate().getFullYear(),
+            notification.createdAt.toDate().getMonth(),
+            notification.createdAt.toDate().getDate()
+          ).toISOString()
+        : 'unknown';
+      if (!groups.has(dateKey)) {
+        groups.set(dateKey, { label, items: [] });
+      }
+      groups.get(dateKey)!.items.push(notification);
+    });
+    return Array.from(groups.entries())
+      .sort((a, b) => (a[0] > b[0] ? -1 : 1))
+      .map(([, value]) => value);
+  }, [notifications]);
+
+  const handleMarkAllRead = () => {
+    unreadNotifications.forEach((notification) => {
+      markAsRead(notification.notificationId);
+    });
   };
 
   const getFallbackColor = (userId: string) => {
@@ -713,12 +845,19 @@ export default function DashboardScreen() {
 
         <RNView style={styles.todayCard}>
           <RNView style={styles.todayHeader}>
-            <Text style={styles.todayTitle}>Today</Text>
+            <RNView>
+              <Text style={styles.todayTitle}>Up next</Text>
+              <Text style={styles.todaySubtitle}>What needs attention soonest</Text>
+            </RNView>
             <Text style={styles.todayDate}>{todayLabel}</Text>
           </RNView>
 
           <Pressable style={styles.todayRow} onPress={handleOpenChores}>
-            <RNView>
+            <RNView style={styles.todayRowContent}>
+              <RNView style={styles.todayIconWrap}>
+                <FontAwesome name="check-circle" size={16} color={colors.accent} />
+              </RNView>
+              <RNView>
               <Text style={styles.todayLabel}>
                 {nextChoreSummary.item
                   ? nextChoreSummary.isPersonal
@@ -736,6 +875,7 @@ export default function DashboardScreen() {
                   ? getDueLabel(nextChoreSummary.item.dueDate ?? null)
                   : 'You are all caught up.'}
               </Text>
+              </RNView>
             </RNView>
             {nextChoreSummary.count > 0 && (
               <RNView style={styles.todayCountBadge}>
@@ -745,7 +885,11 @@ export default function DashboardScreen() {
           </Pressable>
 
           <Pressable style={styles.todayRow} onPress={handleOpenFinance}>
-            <RNView>
+            <RNView style={styles.todayRowContent}>
+              <RNView style={styles.todayIconWrap}>
+                <FontAwesome name="credit-card" size={16} color={colors.accent} />
+              </RNView>
+              <RNView>
               <Text style={styles.todayLabel}>
                 {nextBillSummary.transaction
                   ? nextBillSummary.isPersonal
@@ -763,6 +907,7 @@ export default function DashboardScreen() {
                   ? `$${Number(nextBillSummary.transaction.amount).toFixed(2)}`
                   : 'All settled for now.'}
               </Text>
+              </RNView>
             </RNView>
             {nextBillSummary.count > 0 && (
               <RNView style={styles.todayCountBadge}>
@@ -772,7 +917,11 @@ export default function DashboardScreen() {
           </Pressable>
 
           <Pressable style={styles.todayRow} onPress={handleOpenCalendar}>
-            <RNView>
+            <RNView style={styles.todayRowContent}>
+              <RNView style={styles.todayIconWrap}>
+                <FontAwesome name="calendar" size={16} color={colors.accent} />
+              </RNView>
+              <RNView>
               <Text style={styles.todayLabel}>
                 {nextEventSummary.item
                   ? nextEventSummary.isPersonal
@@ -790,6 +939,7 @@ export default function DashboardScreen() {
                   ? nextEventSummary.item.occurrenceDate.toLocaleDateString()
                   : 'Nothing scheduled yet.'}
               </Text>
+              </RNView>
             </RNView>
             {nextEventSummary.count > 0 && (
               <RNView style={styles.todayCountBadge}>
@@ -1044,9 +1194,16 @@ export default function DashboardScreen() {
           <RNView style={styles.modalContent}>
             <RNView style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Alfred Briefing</Text>
-              <TouchableOpacity onPress={() => setAlfredModalVisible(false)}>
-                <Text style={styles.modalCloseText}>Close</Text>
-              </TouchableOpacity>
+              <RNView style={styles.modalHeaderActions}>
+                {!!unreadNotifications.length && (
+                  <Pressable style={styles.modalHeaderAction} onPress={handleMarkAllRead}>
+                    <Text style={styles.modalHeaderActionText}>Mark all read</Text>
+                  </Pressable>
+                )}
+                <TouchableOpacity onPress={() => setAlfredModalVisible(false)}>
+                  <Text style={styles.modalCloseText}>Close</Text>
+                </TouchableOpacity>
+              </RNView>
             </RNView>
             <TouchableOpacity
               style={styles.modalPrimaryButton}
@@ -1058,20 +1215,53 @@ export default function DashboardScreen() {
               {notifications.length === 0 ? (
                 <Text style={styles.description}>No notifications yet.</Text>
               ) : (
-                notifications.map((notification) => (
-                  <Pressable
-                    key={notification.notificationId}
-                    style={styles.notificationRow}
-                    onPress={() => handleNotificationPress(notification)}
-                  >
-                    <Text style={styles.notificationMessage}>
-                      {notification.message}
-                    </Text>
-                    <Text style={styles.notificationMeta}>
-                      {formatNotificationType(notification.type)} -{' '}
-                      {formatNotificationTime(notification.createdAt)}
-                    </Text>
-                  </Pressable>
+                groupedNotifications.map((group) => (
+                  <RNView key={group.label}>
+                    <Text style={styles.notificationGroupTitle}>{group.label}</Text>
+                    {group.items.map((notification) => {
+                      const tone = getNotificationTone(notification.type);
+                      const isUnread = !notification.readBy?.includes(currentUserId ?? '');
+                      return (
+                        <Pressable
+                          key={notification.notificationId}
+                          style={[
+                            styles.notificationCard,
+                            isUnread && styles.notificationCardUnread,
+                          ]}
+                          onPress={() => handleNotificationPress(notification)}
+                        >
+                          <RNView
+                            style={[
+                              styles.notificationStripe,
+                              { backgroundColor: tone.stripe },
+                            ]}
+                          />
+                          <RNView style={styles.notificationBody}>
+                            <RNView
+                              style={[
+                                styles.notificationIconWrap,
+                                { backgroundColor: tone.accent },
+                              ]}
+                            >
+                              <FontAwesome name={tone.icon} size={16} color={tone.stripe} />
+                            </RNView>
+                            <RNView style={styles.notificationContent}>
+                              <Text style={styles.notificationTitle}>
+                                {formatNotificationType(notification.type)}
+                              </Text>
+                              <Text style={styles.notificationMessage} numberOfLines={2}>
+                                {notification.message}
+                              </Text>
+                              <Text style={styles.notificationMeta}>
+                                {formatNotificationTime(notification.createdAt)}
+                              </Text>
+                            </RNView>
+                            {isUnread && <RNView style={styles.notificationUnreadDot} />}
+                          </RNView>
+                        </Pressable>
+                      );
+                    })}
+                  </RNView>
                 ))
               )}
             </ScrollView>
@@ -1330,6 +1520,11 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontWeight: '600',
     color: colors.accent,
   },
+  todaySubtitle: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
   todayDate: {
     fontSize: 12,
     color: colors.muted,
@@ -1341,6 +1536,21 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  todayRowContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    paddingRight: 10,
+  },
+  todayIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
   },
   todayLabel: {
     fontSize: 12,
@@ -1678,6 +1888,18 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  modalHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modalHeaderAction: {
+    marginRight: 12,
+  },
+  modalHeaderActionText: {
+    fontSize: 12,
+    color: colors.accent,
+    fontWeight: '600',
+  },
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
@@ -1702,19 +1924,73 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   modalList: {
     maxHeight: 360,
   },
-  notificationRow: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+  notificationCard: {
+    flexDirection: 'row',
+    borderRadius: 14,
+    backgroundColor: colors.surface,
+    marginBottom: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  notificationCardUnread: {
+    borderColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  notificationStripe: {
+    width: 6,
+  },
+  notificationBody: {
+    flexDirection: 'row',
+    padding: 12,
+    flex: 1,
+    position: 'relative',
+  },
+  notificationIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  notificationContent: {
+    flex: 1,
+  },
+  notificationTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.accent,
+    marginBottom: 4,
   },
   notificationMessage: {
     fontSize: 14,
-    color: colors.accent,
+    color: colors.text,
     marginBottom: 4,
   },
   notificationMeta: {
     fontSize: 12,
     color: colors.muted,
+  },
+  notificationUnreadDot: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+  },
+  notificationGroupTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.muted,
+    marginBottom: 6,
+    marginTop: 8,
   },
   modalLabel: {
     fontSize: 13,

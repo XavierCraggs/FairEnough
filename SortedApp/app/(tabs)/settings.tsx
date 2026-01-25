@@ -417,26 +417,6 @@ export default function SettingsScreen() {
         )}
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>House Details</Text>
-          {houseLoading ? (
-            <ActivityIndicator color={colors.accent} />
-          ) : houseData ? (
-            <>
-              <Text style={styles.detailText}>{houseData.name}</Text>
-              <RNView style={styles.inviteRow}>
-                <Text style={styles.inviteCodeText}>{houseData.inviteCode}</Text>
-                <TouchableOpacity style={styles.copyButton} onPress={handleCopyInviteCode}>
-                  <Text style={styles.copyButtonText}>Copy</Text>
-                </TouchableOpacity>
-              </RNView>
-              <Text style={styles.helperText}>Share this invite code to add housemates.</Text>
-            </>
-          ) : (
-            <Text style={styles.description}>House details are unavailable right now.</Text>
-          )}
-        </View>
-
-        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Profile</Text>
           <RNView style={styles.profileRow}>
             <RNView style={styles.avatarWrapper}>
@@ -475,6 +455,26 @@ export default function SettingsScreen() {
           <TouchableOpacity style={styles.secondaryButton} onPress={handleOpenProfile}>
             <Text style={styles.secondaryButtonText}>Edit profile</Text>
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>House Details</Text>
+          {houseLoading ? (
+            <ActivityIndicator color={colors.accent} />
+          ) : houseData ? (
+            <>
+              <Text style={styles.detailText}>{houseData.name}</Text>
+              <RNView style={styles.inviteRow}>
+                <Text style={styles.inviteCodeText}>{houseData.inviteCode}</Text>
+                <TouchableOpacity style={styles.copyButton} onPress={handleCopyInviteCode}>
+                  <Text style={styles.copyButtonText}>Copy</Text>
+                </TouchableOpacity>
+              </RNView>
+              <Text style={styles.helperText}>Share this invite code to add housemates.</Text>
+            </>
+          ) : (
+            <Text style={styles.description}>House details are unavailable right now.</Text>
+          )}
         </View>
 
         <View style={styles.section}>

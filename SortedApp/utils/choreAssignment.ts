@@ -54,7 +54,8 @@ export const selectFairAssignee = (
   members: string[],
   pointsMap: Map<string, number>,
   assignmentLoad: Map<string, AssignmentLoad>,
-  excludeUserId?: string | null
+  excludeUserId?: string | null,
+  lastCompletedMap?: Map<string, number>
 ) => {
   const available = members.filter((memberId) => memberId !== excludeUserId);
   const pool = available.length ? available : members;
@@ -79,6 +80,11 @@ export const selectFairAssignee = (
     }
     if (loadA.count !== loadB.count) {
       return loadA.count - loadB.count;
+    }
+    const lastA = lastCompletedMap?.get(a) ?? 0;
+    const lastB = lastCompletedMap?.get(b) ?? 0;
+    if (lastA !== lastB) {
+      return lastA - lastB;
     }
     return a.localeCompare(b);
   })[0];

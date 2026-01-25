@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View as RNView,
+  useColorScheme,
 } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '../../contexts/AuthContext';
@@ -41,10 +42,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFirstName } from '@/utils/name';
 import notificationService from '@/services/notificationService';
 import { Image } from 'expo-image';
+import FontAwesome from '@expo/vector-icons/FontAwesome';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 const BORDER_RADIUS = 16;
 
-type FrequencyOption = 'daily' | 'weekly' | 'one-time';
+type FrequencyOption = 'daily' | 'weekly' | 'monthly' | 'one-time';
 type StatusFilter = 'active' | 'upcoming' | 'history';
 
 interface MemberOption {
@@ -67,6 +70,7 @@ type ChoreListItem =
 const FREQUENCY_OPTIONS: { label: string; value: FrequencyOption }[] = [
   { label: 'Daily', value: 'daily' },
   { label: 'Weekly', value: 'weekly' },
+  { label: 'Monthly', value: 'monthly' },
   { label: 'One-time', value: 'one-time' },
 ];
 
@@ -76,11 +80,73 @@ const STATUS_FILTERS: { label: string; value: StatusFilter }[] = [
   { label: 'History', value: 'history' },
 ];
 
+const CHORE_TEMPLATES: Array<{
+  id: string;
+  title: string;
+  description?: string;
+  frequency: FrequencyOption;
+  points: number;
+}> = [
+  { id: 'bins', title: 'Bins', frequency: 'weekly', points: 3 },
+  { id: 'bathrooms', title: 'Bathrooms', frequency: 'weekly', points: 7 },
+  { id: 'dishwasher', title: 'Dishwasher', frequency: 'daily', points: 4 },
+  { id: 'vacuum', title: 'Vacuum', frequency: 'weekly', points: 5 },
+  { id: 'mop', title: 'Mop floors', frequency: 'weekly', points: 6 },
+  { id: 'mowing', title: 'Mowing', frequency: 'weekly', points: 6 },
+  {
+    id: 'whipper',
+    title: 'Whipper snipping',
+    description: 'Edges and borders',
+    frequency: 'weekly',
+    points: 5,
+  },
+  { id: 'laundry', title: 'Laundry', frequency: 'weekly', points: 4 },
+  { id: 'recycling', title: 'Recycling', frequency: 'weekly', points: 3 },
+  { id: 'dusting', title: 'Dusting', frequency: 'weekly', points: 3 },
+  { id: 'groceries', title: 'Groceries', frequency: 'weekly', points: 4 },
+];
+
+const FALLBACK_AVATAR_COLORS = [
+  '#2D7FF9',
+  '#10B981',
+  '#F97316',
+  '#EF4444',
+  '#8B5CF6',
+  '#F59E0B',
+  '#06B6D4',
+  '#84CC16',
+  '#EC4899',
+];
+
 const startOfDay = (date: Date) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
 const addDays = (date: Date, days: number) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+
+const formatReadableDate = (date: Date) =>
+  date.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+
+const addMonths = (date: Date, months: number) => {
+  const year = date.getFullYear();
+  const month = date.getMonth() + months;
+  const day = date.getDate();
+  const firstOfTargetMonth = new Date(year, month, 1);
+  const lastDay = new Date(
+    firstOfTargetMonth.getFullYear(),
+    firstOfTargetMonth.getMonth() + 1,
+    0
+  ).getDate();
+  return new Date(
+    firstOfTargetMonth.getFullYear(),
+    firstOfTargetMonth.getMonth(),
+    Math.min(day, lastDay)
+  );
+};
 
 const getDueDate = (chore: ChoreData, referenceDate: Date) => {
   if (chore.nextDueAt?.toDate) {
@@ -91,12 +157,15 @@ const getDueDate = (chore: ChoreData, referenceDate: Date) => {
   }
   if (chore.lastCompletedAt?.toDate) {
     const lastCompleted = startOfDay(chore.lastCompletedAt.toDate());
-    const daysToAdd = chore.frequency === 'daily' ? 1 : 7;
-    return new Date(
-      lastCompleted.getFullYear(),
-      lastCompleted.getMonth(),
-      lastCompleted.getDate() + daysToAdd
-    );
+    if (chore.frequency === 'daily') {
+      return addDays(lastCompleted, 1);
+    }
+    if (chore.frequency === 'weekly') {
+      return addDays(lastCompleted, 7);
+    }
+    if (chore.frequency === 'monthly') {
+      return addMonths(lastCompleted, 1);
+    }
   }
   if (chore.createdAt?.toDate) {
     return startOfDay(chore.createdAt.toDate());
@@ -118,10 +187,24 @@ const getDueLabel = (dueDate: Date | null) => {
   return `Due in ${diffDays} days`;
 };
 
+const formatHistoryDate = (date: Date) => {
+  const today = startOfDay(new Date());
+  const day = startOfDay(date);
+  const diffDays = Math.round((today.getTime() - day.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return day.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+};
+
 export default function ChoresScreen() {
   const { user, userProfile } = useAuth();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const colorScheme = useColorScheme();
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0));
   const headerOpacity = scrollY.current.interpolate({
@@ -143,12 +226,14 @@ export default function ChoresScreen() {
   const [averagePoints, setAveragePoints] = useState<number | null>(null);
   const [memberStats, setMemberStats] = useState<FairnessMemberStat[]>([]);
   const [fairnessWindowDays, setFairnessWindowDays] = useState<number | null>(null);
+  const [fairnessExpanded, setFairnessExpanded] = useState(false);
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
   const [sortByPointsDesc, setSortByPointsDesc] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [densityMode, setDensityMode] = useState<'comfortable' | 'compact'>('comfortable');
   const [nudgeSending, setNudgeSending] = useState(false);
+  const [expandedChoreIds, setExpandedChoreIds] = useState<Set<string>>(new Set());
 
   // Modal state
   const [modalVisible, setModalVisible] = useState(false);
@@ -157,9 +242,11 @@ export default function ChoresScreen() {
   const [descriptionInput, setDescriptionInput] = useState('');
   const [pointsInput, setPointsInput] = useState(5);
   const [assignedToInput, setAssignedToInput] = useState<string | null>(null);
-  const [frequencyInput, setFrequencyInput] = useState<FrequencyOption>('daily');
+  const [frequencyInput, setFrequencyInput] = useState<FrequencyOption>('one-time');
   const [submitting, setSubmitting] = useState(false);
   const [setupStep, setSetupStep] = useState(1);
+  const [dueDateInput, setDueDateInput] = useState<Date>(startOfDay(new Date()));
+  const [showDueDatePicker, setShowDueDatePicker] = useState(false);
 
   // Simple 3-dot menu state per chore
   const [openMenuChoreId, setOpenMenuChoreId] = useState<string | null>(null);
@@ -279,7 +366,9 @@ export default function ChoresScreen() {
     setDescriptionInput('');
     setPointsInput(5);
     setAssignedToInput(null);
-    setFrequencyInput('daily');
+    setFrequencyInput('one-time');
+    setDueDateInput(startOfDay(new Date()));
+    setShowDueDatePicker(false);
     setSetupStep(1);
   };
 
@@ -296,6 +385,10 @@ export default function ChoresScreen() {
     setPointsInput(chore.points);
     setAssignedToInput(chore.assignedTo);
     setFrequencyInput(chore.frequency);
+    setDueDateInput(
+      chore.nextDueAt?.toDate ? startOfDay(chore.nextDueAt.toDate()) : startOfDay(new Date())
+    );
+    setShowDueDatePicker(false);
     setSetupStep(3);
     setModalVisible(true);
   };
@@ -333,6 +426,7 @@ export default function ChoresScreen() {
             description: descriptionInput.trim(),
             points,
             frequency: frequencyInput,
+            dueDate: dueDateInput,
           },
           user.uid
         );
@@ -353,6 +447,7 @@ export default function ChoresScreen() {
           points,
           assignedTo: assignedToInput,
           frequency: frequencyInput,
+          dueDate: dueDateInput,
           createdBy: user.uid,
         });
       }
@@ -425,6 +520,28 @@ export default function ChoresScreen() {
     );
   };
 
+  const handleEndSeries = (chore: ChoreData) => {
+    if (!houseId || !user) return;
+    Alert.alert(
+      'End recurring chore',
+      `Stop repeating "${chore.title}" after the current cycle?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'End series',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await choreService.endChoreSeries(houseId, chore.choreId, user.uid);
+            } catch (err: any) {
+              handleError(err, 'Unable to end this chore series. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleReassignChore = async (chore: ChoreData, userId: string | null) => {
     if (!houseId || !user) return;
     try {
@@ -467,11 +584,16 @@ export default function ChoresScreen() {
     } else if (statusFilter === 'upcoming') {
       result = result.filter((c) => {
         const dueDate = getDueDate(c, today);
-        return !!dueDate && dueDate >= today;
+        return !!dueDate && dueDate > today;
       });
     }
 
     return [...result].sort((a, b) => {
+      if (statusFilter === 'active') {
+        const dueA = getDueDate(a, today)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        const dueB = getDueDate(b, today)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        if (dueA !== dueB) return dueA - dueB;
+      }
       if (statusFilter === 'upcoming') {
         const dueA = getDueDate(a, today)?.getTime() ?? Number.MAX_SAFE_INTEGER;
         const dueB = getDueDate(b, today)?.getTime() ?? Number.MAX_SAFE_INTEGER;
@@ -480,7 +602,9 @@ export default function ChoresScreen() {
       if (statusFilter === 'history') {
         const lastA = a.lastCompletedAt?.toDate ? a.lastCompletedAt.toDate().getTime() : 0;
         const lastB = b.lastCompletedAt?.toDate ? b.lastCompletedAt.toDate().getTime() : 0;
-        if (lastA !== lastB) return lastB - lastA;
+        if (lastA !== lastB) {
+          return sortByPointsDesc ? lastB - lastA : lastA - lastB;
+        }
       }
       return sortByPointsDesc ? b.points - a.points : a.points - b.points;
     });
@@ -492,22 +616,19 @@ export default function ChoresScreen() {
     return getFirstName(member?.name ?? 'Unassigned', 'Unassigned');
   };
 
-  const getFallbackColor = (userId: string) => {
-    const palette = [colors.accent, colors.accentMuted, colors.success, colors.warning];
-    let hash = 0;
-    for (let i = 0; i < userId.length; i += 1) {
-      hash = (hash * 31 + userId.charCodeAt(i)) % palette.length;
-    }
-    return palette[hash];
-  };
-
   const getInitial = (name: string) => (name.trim() ? name.trim()[0].toUpperCase() : '?');
 
   const sortedFairnessStats = useMemo(() => {
     if (!memberStats.length) {
       return [];
     }
-    return [...memberStats].sort((a, b) => b.totalPoints - a.totalPoints);
+    return [...memberStats].sort((a, b) => {
+      const delta = b.totalPoints - a.totalPoints;
+      if (delta !== 0) return delta;
+      const nameDelta = a.userName.localeCompare(b.userName);
+      if (nameDelta !== 0) return nameDelta;
+      return a.userId.localeCompare(b.userId);
+    });
   }, [memberStats]);
 
   const memberPhotoMap = useMemo(() => {
@@ -517,6 +638,82 @@ export default function ChoresScreen() {
     });
     return map;
   }, [members]);
+
+  const memberColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const orderedMembers = [...members].sort((a, b) => a.userId.localeCompare(b.userId));
+    let paletteIndex = 0;
+    let hueSeed = 0.12;
+    const goldenRatio = 0.61803398875;
+
+    orderedMembers.forEach((member) => {
+      if (paletteIndex < FALLBACK_AVATAR_COLORS.length) {
+        map.set(member.userId, FALLBACK_AVATAR_COLORS[paletteIndex]);
+        paletteIndex += 1;
+        return;
+      }
+
+      hueSeed = (hueSeed + goldenRatio) % 1;
+      const hue = Math.round(hueSeed * 360);
+      map.set(member.userId, `hsl(${hue}, 68%, 52%)`);
+    });
+
+    return map;
+  }, [members]);
+
+  const pendingPointsMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const today = startOfDay(new Date());
+    chores.forEach((chore) => {
+      if (chore.status === 'completed') return;
+      if (!chore.assignedTo) return;
+      const dueDate = getDueDate(chore, today);
+      if (!dueDate || dueDate > today) return;
+      const points = Number.isFinite(chore.points) ? chore.points : 0;
+      map.set(chore.assignedTo, (map.get(chore.assignedTo) ?? 0) + points);
+    });
+    return map;
+  }, [chores]);
+
+  const fairnessDetailRows = useMemo(() => {
+    if (!sortedFairnessStats.length) return [];
+    const withPending = sortedFairnessStats.map((member) => {
+      const pendingPoints = pendingPointsMap.get(member.userId) ?? 0;
+      const projectedTotal = member.totalPoints + pendingPoints;
+      return { ...member, pendingPoints, projectedTotal };
+    });
+    const averageProjected =
+      withPending.reduce((sum, member) => sum + member.projectedTotal, 0) /
+      withPending.length;
+    return withPending
+      .map((member) => ({
+        ...member,
+        projectedDeviation: member.projectedTotal - averageProjected,
+      }))
+      .sort((a, b) => {
+        const delta = a.projectedDeviation - b.projectedDeviation;
+        if (delta !== 0) return delta;
+        const nameDelta = a.userName.localeCompare(b.userName);
+        if (nameDelta !== 0) return nameDelta;
+        return a.userId.localeCompare(b.userId);
+      });
+  }, [pendingPointsMap, sortedFairnessStats]);
+
+  const maxProjectedTotal = useMemo(() => {
+    if (!fairnessDetailRows.length) return 1;
+    return Math.max(
+      1,
+      ...fairnessDetailRows.map((member) => Math.max(member.projectedTotal, 0))
+    );
+  }, [fairnessDetailRows]);
+
+  const averageProjected = useMemo(() => {
+    if (!fairnessDetailRows.length) return 0;
+    const sum = fairnessDetailRows.reduce((acc, member) => acc + member.projectedTotal, 0);
+    return sum / fairnessDetailRows.length;
+  }, [fairnessDetailRows]);
+
+  const nextUpMember = fairnessDetailRows[0] ?? null;
 
   const fairnessRange = useMemo(() => {
     if (!memberStats.length) {
@@ -543,52 +740,31 @@ export default function ChoresScreen() {
     return (clamped - fairnessRange.min) / range;
   };
 
-  const nextChoreSummary = useMemo(() => {
-    const today = startOfDay(new Date());
-    const openChores = chores.filter((chore) => chore.status !== 'completed');
-    const withDue = openChores
-      .map((chore) => {
-        const dueDate = getDueDate(chore, today);
-        return dueDate ? { chore, dueDate } : null;
-      })
-      .filter(Boolean) as Array<{ chore: ChoreData; dueDate: Date }>;
-
-    if (!withDue.length) {
-      return {
-        chore: null,
-        dueDate: null,
-        dueLabel: null,
-        isPersonal: false,
-        assignedName: null,
-      };
-    }
-
-    const personal = currentUserId
-      ? withDue.filter((item) => item.chore.assignedTo === currentUserId)
-      : [];
-
-    const pickSoonest = (items: Array<{ chore: ChoreData; dueDate: Date }>) =>
-      [...items].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())[0];
-
-    const picked = personal.length ? pickSoonest(personal) : pickSoonest(withDue);
-    const dueLabel = getDueLabel(picked?.dueDate ?? null);
-
-    return {
-      chore: picked?.chore ?? null,
-      dueDate: picked?.dueDate ?? null,
-      dueLabel,
-      isPersonal: !!currentUserId && picked?.chore?.assignedTo === currentUserId,
-      assignedName: getAssignedName(picked?.chore?.assignedTo ?? null),
-    };
-  }, [chores, currentUserId, getAssignedName]);
-
   const groupedItems = useMemo(() => {
     if (!filteredAndSortedChores.length) {
       return [] as ChoreListItem[];
     }
 
     if (statusFilter === 'history') {
-      return filteredAndSortedChores.map((chore) => ({ type: 'chore', chore }));
+      const list: ChoreListItem[] = [];
+      const groups = new Map<string, ChoreData[]>();
+      filteredAndSortedChores.forEach((chore) => {
+        const completedAt = chore.lastCompletedAt?.toDate
+          ? startOfDay(chore.lastCompletedAt.toDate())
+          : startOfDay(new Date());
+        const key = completedAt.toISOString();
+        if (!groups.has(key)) {
+          groups.set(key, []);
+        }
+        groups.get(key)!.push(chore);
+      });
+      const sortedDates = [...groups.keys()].sort((a, b) => (a > b ? -1 : 1));
+      sortedDates.forEach((key) => {
+        const date = new Date(key);
+        list.push({ type: 'header', title: formatHistoryDate(date) });
+        groups.get(key)!.forEach((chore) => list.push({ type: 'chore', chore }));
+      });
+      return list;
     }
 
     const today = startOfDay(new Date());
@@ -643,7 +819,7 @@ export default function ChoresScreen() {
     }
   };
 
-  const renderStatusBadge = (chore: ChoreData) => {
+  const renderStatusBadge = (chore: ChoreData, compact = false) => {
     const today = startOfDay(new Date());
     const dueDate = getDueDate(chore, today);
     const dueLabel = getDueLabel(dueDate);
@@ -671,7 +847,13 @@ export default function ChoresScreen() {
     }
 
     return (
-      <View style={[styles.statusBadge, { backgroundColor }]}>
+      <View
+        style={[
+          styles.statusBadge,
+          compact && styles.statusBadgeCompact,
+          { backgroundColor },
+        ]}
+      >
         <Text style={[styles.statusBadgeText, { color }]}>{label}</Text>
       </View>
     );
@@ -688,9 +870,24 @@ export default function ChoresScreen() {
     );
   };
 
+  const renderHistoryMeta = (chore: ChoreData) => {
+    if (!chore.lastCompletedAt || !chore.lastCompletedBy) return null;
+    const completedBy = getAssignedName(chore.lastCompletedBy);
+    return <Text style={styles.historyCompletedText}>Completed by {completedBy}</Text>;
+  };
+
   const renderChoreCard = (item: ChoreData) => {
     const isPending = item.status === 'pending' || item.status === 'overdue';
     const assignedName = getAssignedName(item.assignedTo);
+    const assignedMember = item.assignedTo
+      ? members.find((member) => member.userId === item.assignedTo)
+      : null;
+    const assignedPhotoUrl = assignedMember?.photoUrl ?? null;
+    const assignedInitial = getInitial(assignedMember?.name ?? assignedName);
+    const assignedColor = item.assignedTo
+      ? memberColorMap.get(item.assignedTo) ?? colors.accent
+      : colors.accentMuted;
+    const isUnassigned = !item.assignedTo;
     const dueDate = getDueDate(item, startOfDay(new Date()));
     const dueLabel = getDueLabel(dueDate);
     const today = startOfDay(new Date());
@@ -703,56 +900,143 @@ export default function ChoresScreen() {
     const canComplete =
       isPending && (item.assignedTo === null || item.assignedTo === currentUserId);
     const isCompact = densityMode === 'compact';
+    const isExpanded = !isCompact || expandedChoreIds.has(item.choreId);
+    const showDescription = !!item.description && isExpanded;
+    const isCompleted = item.status === 'completed';
+    const isRecurring = item.frequency !== 'one-time';
 
     return (
       <View style={[styles.choreCard, isCompact && styles.choreCardCompact]}>
-        <RNView style={[styles.choreHeaderRow, isCompact && styles.choreHeaderRowCompact]}>
-          <RNView style={{ flex: 1 }}>
-            <Text style={[styles.choreTitle, isCompact && styles.choreTitleCompact]}>
-              {item.title}
-            </Text>
-            {!!item.description && (
+        <Pressable
+          style={styles.choreTapArea}
+          onPress={() => {
+            if (isCompleted || statusFilter === 'history') {
+              return;
+            }
+            setOpenMenuChoreId((current) =>
+              current === item.choreId ? null : item.choreId
+            );
+          }}
+        >
+          <RNView
+            style={[
+              styles.choreHeaderRow,
+              isCompact && styles.choreHeaderRowCompact,
+              !showDescription && styles.choreHeaderRowNoDescription,
+              isCompact && !showDescription && styles.choreHeaderRowCompactNoDescription,
+            ]}
+          >
+            <RNView style={{ flex: 1 }}>
               <Text
                 style={[
-                  styles.choreDescription,
-                  isCompact && styles.choreDescriptionCompact,
+                  styles.choreTitle,
+                  isCompact && styles.choreTitleCompact,
+                  !showDescription && styles.choreTitleNoDescription,
                 ]}
               >
-                {item.description}
+                {item.title}
               </Text>
-            )}
+              {showDescription && (
+                <Text
+                  style={[
+                    styles.choreDescription,
+                    isCompact && styles.choreDescriptionCompact,
+                  ]}
+                >
+                  {item.description}
+                </Text>
+              )}
+            </RNView>
+            <RNView style={styles.choreHeaderRight}>
+              {renderStatusBadge(item, isCompact)}
+            </RNView>
           </RNView>
-          <RNView style={styles.choreHeaderRight}>
-            {renderStatusBadge(item)}
-            <TouchableOpacity
-              style={styles.menuButton}
-              onPress={() =>
-                setOpenMenuChoreId((current) =>
-                  current === item.choreId ? null : item.choreId
-                )
-              }
-            >
-              <Text style={styles.menuButtonText}>...</Text>
-            </TouchableOpacity>
-          </RNView>
-        </RNView>
 
-        <RNView style={styles.choreMetaRow}>
-          <Text style={[styles.choreMetaText, isCompact && styles.choreMetaTextCompact]}>
-            {item.points}/10 difficulty
-          </Text>
-          <Text style={styles.choreMetaDivider}>|</Text>
-          <Text style={[styles.choreMetaText, isCompact && styles.choreMetaTextCompact]}>
-            Assigned to {assignedName}
-          </Text>
-        </RNView>
-        {dueLabel && (
-          <Text style={[styles.choreDueText, isCompact && styles.choreDueTextCompact]}>
-            {dueLabel}
-          </Text>
+        {statusFilter !== 'history' ? (
+          <>
+            <RNView style={styles.choreMetaRow}>
+              <RNView style={styles.choreMetaLeft}>
+                <RNView
+                  style={[
+                    styles.assigneePill,
+                    isCompact && styles.assigneePillCompact,
+                    isUnassigned && styles.assigneePillMuted,
+                  ]}
+                >
+                  {assignedPhotoUrl ? (
+                    <Image
+                      source={{ uri: assignedPhotoUrl }}
+                      style={styles.assigneeAvatar}
+                      contentFit="cover"
+                      cachePolicy="disk"
+                      transition={150}
+                    />
+                  ) : (
+                    <RNView style={[styles.assigneeAvatar, { backgroundColor: assignedColor }]}>
+                      <Text style={styles.assigneeAvatarText}>{assignedInitial}</Text>
+                    </RNView>
+                  )}
+                  <Text
+                    style={[
+                      styles.assigneePillText,
+                      isCompact && styles.assigneePillTextCompact,
+                      isUnassigned && styles.assigneePillTextMuted,
+                    ]}
+                  >
+                    Assigned to{' '}
+                    <Text
+                      style={[
+                        styles.assigneeNameText,
+                        isUnassigned && styles.assigneePillTextMuted,
+                      ]}
+                    >
+                      {assignedName}
+                    </Text>
+                  </Text>
+                </RNView>
+                <Text style={styles.choreMetaDivider}>|</Text>
+                <RNView
+                  style={[styles.difficultyPill, isCompact && styles.difficultyPillCompact]}
+                >
+                  <FontAwesome
+                    name="signal"
+                    size={isCompact ? 12 : 13}
+                    color={colors.accent}
+                    style={styles.difficultyIcon}
+                  />
+                  <Text style={[styles.difficultyText, isCompact && styles.difficultyTextCompact]}>
+                    {item.points}/10
+                  </Text>
+                </RNView>
+              </RNView>
+            </RNView>
+            {!isCompact && renderLastCompleted(item)}
+          </>
+        ) : (
+          <RNView style={styles.historyMetaRow}>{renderHistoryMeta(item)}</RNView>
         )}
 
-        {renderLastCompleted(item)}
+          {isCompact && !!item.description && (
+            <Pressable
+              style={styles.compactDetailsToggle}
+              onPress={() =>
+                setExpandedChoreIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(item.choreId)) {
+                    next.delete(item.choreId);
+                  } else {
+                    next.add(item.choreId);
+                  }
+                  return next;
+                })
+              }
+            >
+              <Text style={styles.compactDetailsToggleText}>
+                {isExpanded ? 'Hide details' : 'Show details'}
+              </Text>
+            </Pressable>
+          )}
+        </Pressable>
 
         {canNudge && (
           <TouchableOpacity
@@ -783,42 +1067,61 @@ export default function ChoresScreen() {
 
         {openMenuChoreId === item.choreId && (
           <RNView style={styles.menuContainer}>
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                setOpenMenuChoreId(null);
-                openEditModal(item);
-              }}
-            >
-              <Text style={styles.menuItemText}>Edit</Text>
-            </Pressable>
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                setOpenMenuChoreId(null);
-                // Simple reassign cycle through members including Unassigned
-                const allTargets: (string | null)[] = [
-                  null,
-                  ...members.map((m) => m.userId),
-                ];
-                const currentIndex = allTargets.indexOf(item.assignedTo ?? null);
-                const nextIndex = (currentIndex + 1) % allTargets.length;
-                handleReassignChore(item, allTargets[nextIndex]);
-              }}
-            >
-              <Text style={styles.menuItemText}>Reassign</Text>
-            </Pressable>
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                setOpenMenuChoreId(null);
-                handleDeleteChore(item);
-              }}
-            >
-              <Text style={[styles.menuItemText, { color: colors.danger }]}>
-                Delete
-              </Text>
-            </Pressable>
+            {!isCompleted && (
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => {
+                  setOpenMenuChoreId(null);
+                  openEditModal(item);
+                }}
+              >
+                <Text style={styles.menuItemText}>Edit</Text>
+              </Pressable>
+            )}
+            {!isCompleted && (
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => {
+                  setOpenMenuChoreId(null);
+                  // Simple reassign cycle through members including Unassigned
+                  const allTargets: (string | null)[] = [
+                    null,
+                    ...members.map((m) => m.userId),
+                  ];
+                  const currentIndex = allTargets.indexOf(item.assignedTo ?? null);
+                  const nextIndex = (currentIndex + 1) % allTargets.length;
+                  handleReassignChore(item, allTargets[nextIndex]);
+                }}
+              >
+                <Text style={styles.menuItemText}>Reassign</Text>
+              </Pressable>
+            )}
+            {!isCompleted && isRecurring && (
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => {
+                  setOpenMenuChoreId(null);
+                  handleEndSeries(item);
+                }}
+              >
+                <Text style={[styles.menuItemText, { color: colors.danger }]}>
+                  End series
+                </Text>
+              </Pressable>
+            )}
+            {!isCompleted && !isRecurring && (
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => {
+                  setOpenMenuChoreId(null);
+                  handleDeleteChore(item);
+                }}
+              >
+                <Text style={[styles.menuItemText, { color: colors.danger }]}>
+                  Delete
+                </Text>
+              </Pressable>
+            )}
           </RNView>
         )}
       </View>
@@ -876,7 +1179,25 @@ export default function ChoresScreen() {
 
     return (
       <RNView style={styles.fairnessContainer}>
-        <Text style={styles.sectionTitle}>House Fairness</Text>
+        <RNView style={styles.fairnessHeaderRow}>
+          <Text style={styles.sectionTitle}>House Fairness</Text>
+          <Pressable
+            style={[
+              styles.fairnessExpandButton,
+              fairnessExpanded && styles.fairnessExpandButtonActive,
+            ]}
+            onPress={() => setFairnessExpanded((prev) => !prev)}
+          >
+            <Text
+              style={[
+                styles.fairnessExpandText,
+                fairnessExpanded && styles.fairnessExpandTextActive,
+              ]}
+            >
+              {fairnessExpanded ? 'Hide details' : 'Explain'}
+            </Text>
+          </Pressable>
+        </RNView>
         {averagePoints !== null && (
           <Text style={styles.fairnessSubtitle}>
             Average ({fairnessWindowDays ?? ROLLING_WINDOW_DAYS} days):{' '}
@@ -895,13 +1216,11 @@ export default function ChoresScreen() {
           {sortedFairnessStats.map((member) => {
             const position = getFairnessPosition(member.totalPoints) * 100;
             const isCurrentUser = member.userId === currentUserId;
-            const dotStyle = isCurrentUser
-              ? styles.fairnessDotCurrent
-              : member.deviation >= 0
-              ? styles.fairnessDotPositive
-              : styles.fairnessDotNegative;
+            const statusStyle =
+              member.deviation >= 0 ? styles.fairnessDotPositive : styles.fairnessDotNegative;
+            const dotStyle = [statusStyle, isCurrentUser && styles.fairnessDotCurrent];
             const photoUrl = memberPhotoMap.get(member.userId) ?? null;
-            const fallbackColor = getFallbackColor(member.userId);
+            const fallbackColor = memberColorMap.get(member.userId) ?? colors.accent;
             const deviationLabel = `${member.deviation >= 0 ? '+' : ''}${Math.round(
               member.deviation
             )} vs avg`;
@@ -933,41 +1252,146 @@ export default function ChoresScreen() {
                     </Text>
                   </RNView>
                 )}
+                {isCurrentUser && <RNView style={styles.fairnessYouBadge} />}
               </Pressable>
             );
           })}
         </RNView>
         <RNView style={styles.fairnessLegend}>
-          <Text style={styles.fairnessLegendText}>Behind</Text>
-          <Text style={styles.fairnessLegendText}>Ahead</Text>
+          <RNView style={styles.fairnessLegendItem}>
+            <RNView style={[styles.fairnessLegendDot, styles.fairnessLegendBehind]} />
+            <Text style={styles.fairnessLegendText}>Behind</Text>
+          </RNView>
+          <RNView style={styles.fairnessLegendItem}>
+            <RNView style={[styles.fairnessLegendDot, styles.fairnessLegendYou]} />
+            <Text style={styles.fairnessLegendText}>You</Text>
+          </RNView>
+          <RNView style={styles.fairnessLegendItem}>
+            <RNView style={[styles.fairnessLegendDot, styles.fairnessLegendAhead]} />
+            <Text style={styles.fairnessLegendText}>Ahead</Text>
+          </RNView>
         </RNView>
-      </RNView>
-    );
-  };
 
-  const renderNextChoreCard = () => {
-    const { chore, dueLabel, isPersonal, assignedName } = nextChoreSummary;
-    const heading = chore ? (isPersonal ? 'Your next chore' : 'House next chore') : 'Next chore';
-
-    return (
-      <RNView style={styles.nextChoreCard}>
-        <RNView style={styles.nextChoreHeader}>
-          <Text style={styles.sectionTitle}>{heading}</Text>
-        </RNView>
-        {chore ? (
-          <>
-            <Text style={styles.nextChoreTitle}>{chore.title}</Text>
-            {dueLabel && <Text style={styles.nextChoreMeta}>{dueLabel}</Text>}
-            <Text style={styles.nextChoreMeta}>
-              {chore.assignedTo
-                ? isPersonal
-                  ? 'Assigned to you'
-                  : `Assigned to ${assignedName || 'Unassigned'}`
-                : 'Unassigned'}
+        {fairnessExpanded && (
+          <RNView style={styles.fairnessDetailCard}>
+            <Text style={styles.fairnessDetailTitle}>How it balances right now</Text>
+            <Text style={styles.fairnessDetailSubtitle}>
+              Current points plus assigned chores show who is likely up next.
             </Text>
-          </>
-        ) : (
-          <Text style={styles.nextChoreEmpty}>No chores assigned right now.</Text>
+
+            {nextUpMember && (
+              <RNView style={styles.fairnessDetailHighlight}>
+                <Text style={styles.fairnessDetailHighlightLabel}>Likely next up</Text>
+                <Text style={styles.fairnessDetailHighlightName}>
+                  {nextUpMember.userName}
+                </Text>
+                <Text style={styles.fairnessDetailHighlightMeta}>
+                  {Math.abs(Math.round(nextUpMember.projectedDeviation))} pts{' '}
+                  {nextUpMember.projectedDeviation <= 0 ? 'behind' : 'ahead'} after
+                  pending chores
+                </Text>
+              </RNView>
+            )}
+
+            {fairnessDetailRows.map((member) => {
+              const isCurrentUser = member.userId === currentUserId;
+              const photoUrl = memberPhotoMap.get(member.userId) ?? null;
+              const fallbackColor = memberColorMap.get(member.userId) ?? colors.accent;
+              const currentPct = Math.min(
+                100,
+                (Math.max(member.totalPoints, 0) / maxProjectedTotal) * 100
+              );
+              const pendingPct = Math.min(
+                100 - currentPct,
+                (Math.max(member.pendingPoints, 0) / maxProjectedTotal) * 100
+              );
+              const averagePct = Math.min(
+                100,
+                (Math.max(averageProjected, 0) / maxProjectedTotal) * 100
+              );
+              const deviationLabel = `${member.deviation >= 0 ? '+' : ''}${Math.round(
+                member.deviation
+              )} vs avg`;
+              const projectedLabel = `${member.projectedDeviation >= 0 ? '+' : ''}${Math.round(
+                member.projectedDeviation
+              )} projected`;
+              return (
+                <RNView key={member.userId} style={styles.fairnessDetailRow}>
+                  <RNView style={styles.fairnessDetailRowHeader}>
+                    <RNView style={styles.fairnessDetailMember}>
+                      {photoUrl ? (
+                        <Image
+                          source={{ uri: photoUrl }}
+                          style={styles.fairnessDetailAvatar}
+                          contentFit="cover"
+                          cachePolicy="disk"
+                          transition={150}
+                        />
+                      ) : (
+                        <RNView
+                          style={[
+                            styles.fairnessDetailAvatar,
+                            { backgroundColor: fallbackColor },
+                          ]}
+                        >
+                          <Text style={styles.fairnessDetailAvatarText}>
+                            {getInitial(member.userName)}
+                          </Text>
+                        </RNView>
+                      )}
+                      <Text style={styles.fairnessDetailName}>{member.userName}</Text>
+                      {isCurrentUser && (
+                        <Text style={styles.fairnessDetailYouTag}>You</Text>
+                      )}
+                    </RNView>
+                    <Text style={styles.fairnessDetailScore}>
+                      {Math.round(member.totalPoints)} pts
+                    </Text>
+                  </RNView>
+                  <RNView style={styles.fairnessDetailBarTrack}>
+                    <RNView
+                      style={[styles.fairnessDetailBarCurrent, { width: `${currentPct}%` }]}
+                    >
+                      {currentPct >= 18 && (
+                        <Text style={styles.fairnessDetailBarText}>
+                          {Math.round(member.totalPoints)} pts
+                        </Text>
+                      )}
+                    </RNView>
+                    {pendingPct > 0 && (
+                      <RNView
+                        style={[
+                          styles.fairnessDetailBarPending,
+                          { width: `${pendingPct}%` },
+                        ]}
+                      >
+                        {pendingPct >= 18 && (
+                          <Text style={styles.fairnessDetailBarText}>
+                            +{Math.round(member.pendingPoints)}
+                          </Text>
+                        )}
+                      </RNView>
+                    )}
+                    <RNView
+                      style={[
+                        styles.fairnessDetailBarAverageMarker,
+                        { left: `${averagePct}%` },
+                      ]}
+                    >
+                      <Text style={styles.fairnessDetailBarAverageText}>avg</Text>
+                    </RNView>
+                  </RNView>
+                  <RNView style={styles.fairnessDetailMetaRow}>
+                    <Text style={styles.fairnessDetailMetaText}>{deviationLabel}</Text>
+                    <Text style={styles.fairnessDetailMetaText}>
+                      Pending {Math.round(member.pendingPoints)} pts
+                    </Text>
+                    <Text style={styles.fairnessDetailMetaText}>{projectedLabel}</Text>
+                  </RNView>
+                </RNView>
+              );
+            })}
+          </RNView>
         )}
       </RNView>
     );
@@ -1012,8 +1436,8 @@ export default function ChoresScreen() {
             {statusFilter === 'history'
               ? 'Newest'
               : sortByPointsDesc
-              ? 'Points high'
-              : 'Points low'}
+              ? 'Points ↑'
+              : 'Points ↓'}
           </Text>
         </TouchableOpacity>
         <RNView style={styles.densityToggle}>
@@ -1087,18 +1511,50 @@ export default function ChoresScreen() {
           style={styles.modalBackdrop}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <RNView style={styles.modalContent}>
-            <ScrollView
-              contentContainerStyle={styles.modalScrollContent}
-              keyboardShouldPersistTaps="handled"
-            >
+        <RNView style={styles.modalContent}>
+          <ScrollView
+            contentContainerStyle={styles.modalScrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
             <Text style={styles.modalTitle}>
               {editingChore ? 'Edit Chore' : 'Add Chore'}
             </Text>
+            {editingChore && editingChore.frequency !== 'one-time' && (
+              <Text style={styles.modalSubtitle}>
+                Changes apply to future repeats only.
+              </Text>
+            )}
             {!editingChore && renderStepIndicator()}
 
             {(editingChore || setupStep === 1) && (
               <>
+                {!editingChore && (
+                  <>
+                    <Text style={styles.modalLabel}>Templates</Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.templateRow}
+                    >
+                      {CHORE_TEMPLATES.map((template) => (
+                        <Pressable
+                          key={template.id}
+                          style={styles.templateChip}
+                          onPress={() => {
+                            setTitleInput(template.title);
+                            setDescriptionInput(template.description ?? '');
+                            setPointsInput(template.points);
+                            setFrequencyInput(template.frequency);
+                            setDueDateInput(startOfDay(new Date()));
+                          }}
+                        >
+                          <Text style={styles.templateChipText}>{template.title}</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </>
+                )}
+
                 <Text style={styles.modalLabel}>Title</Text>
                 <TextInput
                   style={styles.input}
@@ -1106,6 +1562,7 @@ export default function ChoresScreen() {
                   placeholderTextColor={colors.muted}
                   value={titleInput}
                   onChangeText={setTitleInput}
+                  onFocus={() => setShowDueDatePicker(false)}
                 />
 
                 <Text style={styles.modalLabel}>Description (optional)</Text>
@@ -1116,6 +1573,7 @@ export default function ChoresScreen() {
                   multiline
                   value={descriptionInput}
                   onChangeText={setDescriptionInput}
+                  onFocus={() => setShowDueDatePicker(false)}
                 />
 
                 <Text style={styles.modalLabel}>Frequency</Text>
@@ -1141,6 +1599,43 @@ export default function ChoresScreen() {
                     </TouchableOpacity>
                   ))}
                 </RNView>
+
+                <Text style={styles.modalLabel}>
+                  {frequencyInput === 'one-time' ? 'Due date' : 'First due date'}
+                </Text>
+                <Pressable
+                  style={styles.datePickerButton}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setShowDueDatePicker((prev) => !prev);
+                  }}
+                >
+                  <Text style={styles.datePickerText}>
+                    {formatReadableDate(dueDateInput)}
+                  </Text>
+                </Pressable>
+                {showDueDatePicker && (
+                  <RNView style={styles.datePickerShell}>
+                    <DateTimePicker
+                      value={dueDateInput}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                      themeVariant={
+                        Platform.OS === 'ios'
+                          ? colorScheme === 'dark'
+                            ? 'dark'
+                            : 'light'
+                          : undefined
+                      }
+                      textColor={Platform.OS === 'ios' ? colors.accent : undefined}
+                      onChange={(_, date) => {
+                        if (date) {
+                          setDueDateInput(startOfDay(date));
+                        }
+                      }}
+                    />
+                  </RNView>
+                )}
               </>
             )}
 
@@ -1209,21 +1704,40 @@ export default function ChoresScreen() {
 
             {!editingChore && setupStep === 3 && (
               <RNView style={styles.reviewCard}>
-                <Text style={styles.reviewTitle}>Review</Text>
-                <Text style={styles.reviewItem}>
-                  Title: {titleInput.trim() || 'Untitled'}
+                <Text style={styles.reviewTitle}>Quick check</Text>
+                <RNView style={styles.reviewRow}>
+                  <FontAwesome name="tag" size={14} color={colors.accent} />
+                <Text style={styles.reviewValue} numberOfLines={1}>
+                  {titleInput.trim() || 'Untitled'}
                 </Text>
-                <Text style={styles.reviewItem}>
-                  Frequency: {frequencyInput}
-                </Text>
-                <Text style={styles.reviewItem}>
-                  Difficulty: {pointsInput}/10
-                </Text>
-                <Text style={styles.reviewItem}>
-                  Assigned to: {getAssignedName(assignedToInput)}
-                </Text>
+                </RNView>
+                <RNView style={styles.reviewRow}>
+                  <FontAwesome name="repeat" size={14} color={colors.accent} />
+                  <Text style={styles.reviewValue}>{frequencyInput}</Text>
+                </RNView>
+                <RNView style={styles.reviewRow}>
+                  <FontAwesome name="calendar" size={14} color={colors.accent} />
+                  <Text style={styles.reviewValue}>
+                    {formatReadableDate(dueDateInput)}
+                  </Text>
+                </RNView>
+                <RNView style={styles.reviewRow}>
+                  <FontAwesome name="signal" size={14} color={colors.accent} />
+                  <Text style={styles.reviewValue}>{pointsInput}/10</Text>
+                </RNView>
+                <RNView style={styles.reviewRow}>
+                  <FontAwesome name="user" size={14} color={colors.accent} />
+                  <Text style={styles.reviewValue}>
+                    {getAssignedName(assignedToInput)}
+                  </Text>
+                </RNView>
                 {!!descriptionInput.trim() && (
-                  <Text style={styles.reviewItem}>Notes: {descriptionInput.trim()}</Text>
+                  <RNView style={styles.reviewRow}>
+                    <FontAwesome name="sticky-note" size={14} color={colors.accent} />
+                    <Text style={styles.reviewValue} numberOfLines={2}>
+                      {descriptionInput.trim()}
+                    </Text>
+                  </RNView>
                 )}
               </RNView>
             )}
@@ -1307,7 +1821,6 @@ export default function ChoresScreen() {
         ListHeaderComponent={
           <RNView>
             <Text style={styles.title}>Chores</Text>
-            {renderNextChoreCard()}
             {renderFairnessBar()}
             {renderFilters()}
             <Text style={styles.listSubtitle}>
@@ -1431,15 +1944,28 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   choreHeaderRowCompact: {
     marginBottom: 6,
   },
+  choreHeaderRowNoDescription: {
+    marginBottom: 4,
+  },
+  choreHeaderRowCompactNoDescription: {
+    marginBottom: 2,
+  },
   choreHeaderRight: {
     alignItems: 'flex-end',
     marginLeft: 12,
+  },
+  choreHeaderRightCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   choreTitle: {
     fontSize: 17,
     fontWeight: '600',
     color: colors.accent,
     marginBottom: 4,
+  },
+  choreTitleNoDescription: {
+    marginBottom: 0,
   },
   choreTitleCompact: {
     fontSize: 15,
@@ -1456,6 +1982,13 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     alignItems: 'center',
     marginTop: 4,
     marginBottom: 4,
+    flexWrap: 'wrap',
+  },
+  choreMetaLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    flex: 1,
   },
   choreMetaText: {
     fontSize: 13,
@@ -1469,10 +2002,88 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.muted,
     marginHorizontal: 6,
   },
+  assigneePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.accentSoft,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  assigneePillCompact: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  assigneePillMuted: {
+    backgroundColor: colors.surface,
+  },
+  assigneeAvatar: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+    overflow: 'hidden',
+  },
+  assigneeAvatarText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.onAccent,
+  },
+  assigneePillText: {
+    fontSize: 12,
+    color: colors.accent,
+  },
+  assigneePillTextCompact: {
+    fontSize: 11,
+  },
+  assigneePillTextMuted: {
+    color: colors.muted,
+  },
+  assigneeNameText: {
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  difficultyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  difficultyPillCompact: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  difficultyIcon: {
+    marginRight: 6,
+  },
+  difficultyText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  difficultyTextCompact: {
+    fontSize: 11,
+  },
   lastCompletedText: {
     fontSize: 12,
     color: colors.muted,
     marginTop: 4,
+  },
+  historyMetaRow: {
+    marginTop: 6,
+  },
+  historyCompletedText: {
+    fontSize: 13,
+    color: colors.muted,
+    fontWeight: '600',
   },
   choreDueText: {
     fontSize: 12,
@@ -1487,6 +2098,10 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     marginBottom: 8,
+  },
+  statusBadgeCompact: {
+    marginBottom: 0,
+    marginRight: 8,
   },
   statusBadgeText: {
     fontSize: 11,
@@ -1511,24 +2126,30 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   nudgeInlineButton: {
     marginTop: 8,
-    alignSelf: 'flex-start',
+    alignSelf: 'stretch',
     backgroundColor: colors.accent,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    alignItems: 'center',
   },
   nudgeInlineText: {
     color: colors.onAccent,
     fontWeight: '600',
     fontSize: 13,
   },
-  menuButton: {
-    paddingHorizontal: 6,
+  compactDetailsToggle: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
     paddingVertical: 4,
   },
-  menuButtonText: {
-    fontSize: 16,
-    color: colors.muted,
+  compactDetailsToggleText: {
+    fontSize: 12,
+    color: colors.accent,
+    fontWeight: '600',
+  },
+  choreTapArea: {
+    width: '100%',
   },
   menuContainer: {
     marginTop: 8,
@@ -1611,41 +2232,35 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     justifyContent: 'center',
   },
   fairnessContainer: {
-    backgroundColor: colors.panel,
+    backgroundColor: colors.card,
     borderRadius: BORDER_RADIUS,
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  nextChoreCard: {
-    backgroundColor: colors.card,
-    borderRadius: BORDER_RADIUS,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  nextChoreHeader: {
+  fairnessHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 2,
   },
-  nextChoreTitle: {
-    fontSize: 16,
+  fairnessExpandButton: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: colors.accentSoft,
+  },
+  fairnessExpandButtonActive: {
+    backgroundColor: colors.accent,
+  },
+  fairnessExpandText: {
+    fontSize: 12,
     fontWeight: '600',
     color: colors.accent,
-    marginBottom: 6,
   },
-  nextChoreMeta: {
-    fontSize: 12,
-    color: colors.muted,
-    marginBottom: 4,
-  },
-  nextChoreEmpty: {
-    fontSize: 13,
-    color: colors.muted,
+  fairnessExpandTextActive: {
+    color: colors.onAccent,
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -1678,17 +2293,19 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     width: 2,
     height: 18,
     backgroundColor: colors.accent,
-    top: 14,
+    top: '50%',
+    transform: [{ translateY: -9 }],
   },
   fairnessDot: {
     position: 'absolute',
-    top: 6,
+    top: '50%',
     width: 26,
     height: 26,
     borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: -13,
+    transform: [{ translateY: -13 }],
   },
   fairnessDotPositive: {
     borderWidth: 2,
@@ -1701,9 +2318,12 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     backgroundColor: colors.card,
   },
   fairnessDotCurrent: {
-    borderWidth: 2,
-    borderColor: colors.accent,
-    backgroundColor: colors.card,
+    borderWidth: 3,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
   },
   fairnessAvatar: {
     width: 22,
@@ -1713,6 +2333,17 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
+  fairnessYouBadge: {
+    position: 'absolute',
+    right: -1,
+    bottom: -1,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.accent,
+    borderWidth: 2,
+    borderColor: colors.card,
+  },
   fairnessAvatarText: {
     fontSize: 11,
     fontWeight: '700',
@@ -1721,8 +2352,169 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   fairnessLegend: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  fairnessLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  fairnessLegendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    backgroundColor: colors.card,
+    marginRight: 6,
+  },
+  fairnessLegendBehind: {
+    borderColor: colors.danger,
+  },
+  fairnessLegendAhead: {
+    borderColor: colors.success,
+  },
+  fairnessLegendYou: {
+    borderColor: colors.accent,
   },
   fairnessLegendText: {
+    fontSize: 11,
+    color: colors.muted,
+  },
+  fairnessDetailCard: {
+    marginTop: 12,
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  fairnessDetailTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+    marginBottom: 4,
+  },
+  fairnessDetailSubtitle: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 10,
+  },
+  fairnessDetailHighlight: {
+    borderRadius: 12,
+    padding: 10,
+    backgroundColor: colors.accentSoft,
+    marginBottom: 12,
+  },
+  fairnessDetailHighlightLabel: {
+    fontSize: 11,
+    color: colors.muted,
+    marginBottom: 2,
+  },
+  fairnessDetailHighlightName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  fairnessDetailHighlightMeta: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  fairnessDetailRow: {
+    marginBottom: 12,
+  },
+  fairnessDetailRowHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  fairnessDetailMember: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  fairnessDetailAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  fairnessDetailAvatarText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.onAccent,
+  },
+  fairnessDetailName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  fairnessDetailYouTag: {
+    marginLeft: 6,
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.onAccent,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  fairnessDetailScore: {
+    fontSize: 12,
+    color: colors.muted,
+    fontWeight: '600',
+  },
+  fairnessDetailBarTrack: {
+    height: 18,
+    borderRadius: 999,
+    backgroundColor: colors.panel,
+    overflow: 'hidden',
+    flexDirection: 'row',
+  },
+  fairnessDetailBarCurrent: {
+    height: '100%',
+    backgroundColor: colors.accent,
+    justifyContent: 'center',
+    paddingLeft: 6,
+  },
+  fairnessDetailBarPending: {
+    height: '100%',
+    backgroundColor: colors.accentMuted,
+    justifyContent: 'center',
+    paddingLeft: 6,
+  },
+  fairnessDetailBarText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.onAccent,
+  },
+  fairnessDetailBarAverageMarker: {
+    position: 'absolute',
+    top: 2,
+    bottom: 2,
+    width: 2,
+    backgroundColor: colors.accent,
+  },
+  fairnessDetailBarAverageText: {
+    position: 'absolute',
+    top: -18,
+    left: 6,
+    fontSize: 10,
+    color: colors.muted,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 4,
+    borderRadius: 6,
+  },
+  fairnessDetailMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  fairnessDetailMetaText: {
     fontSize: 11,
     color: colors.muted,
   },
@@ -1821,11 +2613,55 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.accent,
     marginBottom: 16,
   },
+  modalSubtitle: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 12,
+  },
   modalLabel: {
     fontSize: 13,
     color: colors.muted,
     marginBottom: 4,
     marginTop: 8,
+  },
+  templateRow: {
+    paddingVertical: 4,
+    paddingRight: 6,
+  },
+  templateChip: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  templateChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  datePickerButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.accentSoft,
+  },
+  datePickerText: {
+    fontSize: 14,
+    color: colors.accent,
+    fontWeight: '500',
+  },
+  datePickerShell: {
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+    backgroundColor: colors.accentSoft,
   },
   helperText: {
     fontSize: 12,
@@ -1880,10 +2716,16 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.accent,
     marginBottom: 8,
   },
-  reviewItem: {
+  reviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  reviewValue: {
     fontSize: 13,
-    color: colors.muted,
-    marginBottom: 4,
+    color: colors.accent,
+    flex: 1,
+    marginLeft: 10,
   },
   input: {
     borderRadius: 12,

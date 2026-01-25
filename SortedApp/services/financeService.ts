@@ -13,6 +13,7 @@ import {
   where,
   deleteDoc,
   arrayUnion,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '../api/firebase';
 import notificationService from './notificationService';
@@ -30,6 +31,7 @@ export interface TransactionData {
   description: string;
   splitWith: string[];
   splitAmounts?: Record<string, number> | null;
+  paidBy?: Record<string, number>;
   confirmedBy: string[];
   contestedBy?: string[];
   contestNotes?: Record<string, { reason: string; note?: string; createdAt: Timestamp }>;
@@ -86,6 +88,83 @@ export interface FinanceServiceError {
  * Finance service for managing house transactions and debts
  */
 class FinanceService {
+  private roundCurrency(value: number) {
+    return Math.round(value * 100) / 100;
+  }
+
+  private computeSplitValues(transaction: TransactionData): Record<string, number> {
+    const splitWith = transaction.splitWith || [];
+    if (!splitWith.length) return {};
+    const amount = Number(transaction.amount) || 0;
+    if (!amount) return {};
+
+    if (transaction.splitAmounts) {
+      const totalSplit = splitWith.reduce((sum, memberId) => {
+        const value = Number(transaction.splitAmounts?.[memberId]);
+        return Number.isFinite(value) ? sum + value : sum;
+      }, 0);
+
+      if (totalSplit > 0) {
+        const scale = Math.abs(totalSplit - amount) > 0.01 ? amount / totalSplit : 1;
+        return splitWith.reduce<Record<string, number>>((acc, memberId) => {
+          const value = Number(transaction.splitAmounts?.[memberId]);
+          acc[memberId] = Number.isFinite(value)
+            ? this.roundCurrency(value * scale)
+            : 0;
+          return acc;
+        }, {});
+      }
+    }
+
+    const share = amount / splitWith.length;
+    return splitWith.reduce<Record<string, number>>((acc, memberId) => {
+      acc[memberId] = this.roundCurrency(share);
+      return acc;
+    }, {});
+  }
+
+  private async applySettlementAllocation(
+    houseId: string,
+    from: string,
+    to: string,
+    amount: number
+  ) {
+    const transactionsRef = collection(db, 'houses', houseId, 'transactions');
+    const q = query(
+      transactionsRef,
+      where('payerId', '==', to),
+      where('splitWith', 'array-contains', from),
+      orderBy('createdAt', 'asc')
+    );
+    const snapshot = await getDocs(q);
+    let remaining = this.roundCurrency(amount);
+    const batch = writeBatch(db);
+    let updates = 0;
+
+    snapshot.docs.forEach((docSnap) => {
+      if (remaining <= 0) return;
+      const data = docSnap.data() as TransactionData;
+      const splitValues = this.computeSplitValues(data);
+      const share = splitValues[from] ?? 0;
+      if (share <= 0) return;
+      const paidBy = { ...(data.paidBy || {}) };
+      const alreadyPaid = Number(paidBy[from]) || 0;
+      const unpaid = this.roundCurrency(share - alreadyPaid);
+      if (unpaid <= 0) return;
+      const allocation = Math.min(remaining, unpaid);
+      paidBy[from] = this.roundCurrency(alreadyPaid + allocation);
+      remaining = this.roundCurrency(remaining - allocation);
+      batch.update(docSnap.ref, {
+        paidBy,
+        updatedAt: serverTimestamp(),
+      });
+      updates += 1;
+    });
+
+    if (updates > 0) {
+      await batch.commit();
+    }
+  }
   /**
    * Add a new transaction to a house
    */
@@ -425,6 +504,12 @@ class FinanceService {
           ...payload,
         } as SettlementData;
       });
+
+      try {
+        await this.applySettlementAllocation(houseId, from, to, settlement.amount);
+      } catch (allocationError) {
+        console.error('Failed to allocate settlement to transactions:', allocationError);
+      }
 
       return settlement;
     } catch (error) {

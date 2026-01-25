@@ -24,6 +24,7 @@ import financeService, {
   SimplifiedDebt,
   TransactionData,
 } from '../../services/financeService';
+import notificationService from '../../services/notificationService';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../api/firebase';
 import {
@@ -223,33 +224,38 @@ export default function FinanceScreen() {
     []
   );
 
-  const getNetImpact = useCallback(
-    (transaction: TransactionData, userId: string) => {
-      const splitValues = computeSplitValues(transaction);
-      const share = splitValues[userId] ?? 0;
-      let delta = -share;
-      if (transaction.payerId === userId) {
-        delta += Number(transaction.amount) || 0;
-      }
-      return roundCurrency(delta);
-    },
-    [computeSplitValues]
-  );
-
-  const getImpactMap = useCallback(
+  const getTransactionPaymentStatus = useCallback(
     (transaction: TransactionData) => {
-      const splitWith = transaction.splitWith || [];
       const splitValues = computeSplitValues(transaction);
-      const participants = Array.from(new Set([...splitWith, transaction.payerId]));
-      return participants.reduce<Record<string, number>>((acc, userId) => {
-        const share = splitValues[userId] ?? 0;
-        let delta = -share;
-        if (transaction.payerId === userId) {
-          delta += Number(transaction.amount) || 0;
-        }
-        acc[userId] = roundCurrency(delta);
-        return acc;
-      }, {});
+      const participants = (transaction.splitWith || []).filter(
+        (memberId) => (splitValues[memberId] ?? 0) > 0.009
+      );
+      let totalDue = 0;
+      let totalPaid = 0;
+
+      participants.forEach((memberId) => {
+        const share = splitValues[memberId] ?? 0;
+        totalDue += share;
+        const paid =
+          memberId === transaction.payerId
+            ? share
+            : Number(transaction.paidBy?.[memberId]) || 0;
+        const paidClamped = Math.min(share, paid);
+        totalPaid += paidClamped;
+      });
+
+      const roundedDue = roundCurrency(totalDue);
+      const roundedPaid = roundCurrency(totalPaid);
+      const isPaid =
+        participants.length > 0 && roundedPaid >= roundedDue - 0.01;
+
+      return {
+        isPaid,
+        totalParticipants: participants.length,
+        totalDue: roundedDue,
+        totalPaid: roundedPaid,
+        splitValues,
+      };
     },
     [computeSplitValues]
   );
@@ -645,38 +651,43 @@ export default function FinanceScreen() {
     return totalParticipants > 0 && confirmedCount >= totalParticipants;
   }, []);
 
-  const activeTransactions = useMemo(
-    () => transactions.filter((transaction) => !isTransactionConfirmed(transaction)),
-    [transactions, isTransactionConfirmed]
-  );
+  const { activeTransactions, paidTransactions } = useMemo(() => {
+    const active: TransactionData[] = [];
+    const paid: TransactionData[] = [];
+    transactions.forEach((transaction) => {
+      const status = getTransactionPaymentStatus(transaction);
+      if (status.isPaid) {
+        paid.push(transaction);
+      } else {
+        active.push(transaction);
+      }
+    });
+    return { activeTransactions: active, paidTransactions: paid };
+  }, [transactions, getTransactionPaymentStatus]);
 
-  const settledTransactions = useMemo(
-    () => transactions.filter((transaction) => isTransactionConfirmed(transaction)),
-    [transactions, isTransactionConfirmed]
-  );
+  const sortedSettlements = useMemo(() => {
+    return [...settlements].sort((a, b) => {
+      const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+      const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+      return bTime - aTime;
+    });
+  }, [settlements]);
 
   useEffect(() => {
     if (!focusTransactionId || !transactions.length) {
       return;
     }
 
-    const inActive = activeTransactions.some(
-      (transaction) => transaction.transactionId === focusTransactionId
-    );
-    const inSettled = settledTransactions.some(
+    const exists = transactions.some(
       (transaction) => transaction.transactionId === focusTransactionId
     );
 
-    if (inSettled) {
-      setShowSettled(true);
-    }
-
-    if (inActive || inSettled) {
+    if (exists) {
       setHighlightTransactionId(focusTransactionId);
       const timeout = setTimeout(() => setHighlightTransactionId(null), 3000);
       return () => clearTimeout(timeout);
     }
-  }, [focusTransactionId, transactions, activeTransactions, settledTransactions]);
+  }, [focusTransactionId, transactions]);
 
   const getDebtStatus = useCallback(
     (debt: SimplifiedDebt) => {
@@ -694,30 +705,48 @@ export default function FinanceScreen() {
         };
       }
 
-      const totalParticipants = relatedTransactions.reduce(
-        (sum, transaction) => sum + (transaction.splitWith?.length ?? 0),
-        0
-      );
-      const confirmedParticipants = relatedTransactions.reduce(
-        (sum, transaction) => sum + (transaction.confirmedBy?.length ?? 0),
-        0
-      );
+      let totalDue = 0;
+      let totalPaid = 0;
 
-      if (totalParticipants > 0 && confirmedParticipants >= totalParticipants) {
+      relatedTransactions.forEach((transaction) => {
+        const splitValues = computeSplitValues(transaction);
+        const share = splitValues[debt.from] ?? 0;
+        if (share <= 0) return;
+        totalDue += share;
+        const paid =
+          debt.from === transaction.payerId
+            ? share
+            : Number(transaction.paidBy?.[debt.from]) || 0;
+        totalPaid += Math.min(share, paid);
+      });
+
+      const roundedDue = roundCurrency(totalDue);
+      const roundedPaid = roundCurrency(totalPaid);
+
+      if (roundedDue <= 0) {
         return {
-          label: 'Acknowledged',
+          label: 'Net balance',
+          backgroundColor: colors.accentSoft,
+          color: colors.accent,
+        };
+      }
+
+      if (roundedPaid >= roundedDue - 0.01) {
+        return {
+          label: 'Paid',
           backgroundColor: colors.successSoft,
           color: colors.success,
         };
       }
 
+      const remaining = roundCurrency(Math.max(0, roundedDue - roundedPaid));
       return {
-        label: `Confirmed ${confirmedParticipants}/${totalParticipants}`,
+        label: `Awaiting ${formatCurrency(remaining)}`,
         backgroundColor: colors.warningSoft,
         color: colors.warning,
       };
     },
-    [transactions, isTransactionConfirmed]
+    [transactions, computeSplitValues, formatCurrency, colors]
   );
 
   const debtTransactions = useMemo(() => {
@@ -855,70 +884,147 @@ export default function FinanceScreen() {
       );
     }
 
+    const netTotals = debts.reduce(
+      (acc, debt) => {
+        if (debt.from === currentUserId) acc.owes += debt.amount;
+        if (debt.to === currentUserId) acc.owed += debt.amount;
+        return acc;
+      },
+      { owes: 0, owed: 0 }
+    );
+    const netAmount = netTotals.owed - netTotals.owes;
+    const netLabel = netAmount >= 0 ? "You're owed" : 'You owe';
+    const netColor = netAmount >= 0 ? colors.success : colors.danger;
+
     return (
       <RNView style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Debt Summary</Text>
-        <Text style={styles.debtSummaryHint}>
-          Active transactions only. Tap a card for the breakdown.
-        </Text>
-        {debts.map((debt) => {
-          const isCurrentUserDebtor = debt.from === currentUserId;
-          const isCurrentUserCreditor = debt.to === currentUserId;
-          const label = isCurrentUserDebtor
-            ? `You owe ${getMemberName(debt.to, debt.toName)}`
-            : isCurrentUserCreditor
-            ? `${getMemberName(debt.from, debt.fromName)} owes you`
-            : `${getMemberName(debt.from, debt.fromName)} owes ${getMemberName(
-                debt.to,
-                debt.toName
-              )}`;
-          const amountColor = isCurrentUserDebtor
-            ? colors.danger
-            : isCurrentUserCreditor
-            ? colors.success
-            : colors.accent;
-          const status = getDebtStatus(debt);
-          const canSettle = currentUserId === debt.from;
-          return (
-            <Pressable
-              key={`${debt.from}-${debt.to}`}
-              style={styles.debtCard}
-              onPress={() => openDebtDetail(debt)}
-            >
-              <RNView style={styles.debtRow}>
-                <Text style={styles.debtLabel}>{label}</Text>
-                <Text style={[styles.debtAmount, { color: amountColor }]}>
-                  {formatCurrency(debt.amount)}
-                </Text>
-              </RNView>
-              <RNView style={styles.debtMetaRow}>
-                <RNView style={styles.debtMetaLeft}>
-                  <RNView
-                    style={[
-                      styles.statusBadge,
-                      { backgroundColor: status.backgroundColor },
-                    ]}
-                  >
-                    <Text style={[styles.statusBadgeText, { color: status.color }]}>
-                      {status.label}
-                    </Text>
+        <RNView style={styles.debtSummaryCard}>
+          <Text style={styles.debtSummaryLabel}>{netLabel}</Text>
+          <Text style={[styles.debtSummaryAmount, { color: netColor }]}>
+            {formatCurrency(Math.abs(netAmount))}
+          </Text>
+          <Text style={styles.debtSummaryHint}>
+            Unpaid transactions only. Tap a row for details.
+          </Text>
+          <RNView style={styles.debtSummaryMetaRow}>
+            <RNView style={styles.debtSummaryChip}>
+              <Text style={styles.debtSummaryChipLabel}>You owe</Text>
+              <Text style={styles.debtSummaryChipValue}>
+                {formatCurrency(netTotals.owes)}
+              </Text>
+            </RNView>
+            <RNView style={[styles.debtSummaryChip, { marginRight: 0 }]}>
+              <Text style={styles.debtSummaryChipLabel}>You're owed</Text>
+              <Text style={styles.debtSummaryChipValue}>
+                {formatCurrency(netTotals.owed)}
+              </Text>
+            </RNView>
+          </RNView>
+        </RNView>
+
+        <RNView style={styles.debtList}>
+          {debts.map((debt) => {
+            const isCurrentUserDebtor = debt.from === currentUserId;
+            const isCurrentUserCreditor = debt.to === currentUserId;
+            const counterpartId = isCurrentUserDebtor ? debt.to : debt.from;
+            const counterpartName = isCurrentUserDebtor
+              ? getMemberName(debt.to, debt.toName)
+              : getMemberName(debt.from, debt.fromName);
+            const label = isCurrentUserDebtor
+              ? 'You owe'
+              : isCurrentUserCreditor
+              ? 'Owes you'
+              : `${getMemberName(debt.from, debt.fromName)} owes ${getMemberName(
+                  debt.to,
+                  debt.toName
+                )}`;
+            const amountColor = isCurrentUserDebtor
+              ? colors.danger
+              : isCurrentUserCreditor
+              ? colors.success
+              : colors.accent;
+            const canSettle = currentUserId === debt.from;
+            const canNudge = currentUserId === debt.to;
+            const photoUrl = memberPhotoMap.get(counterpartId) ?? null;
+            const fallbackColor = getFallbackColor(counterpartId);
+            return (
+              <Pressable
+                key={`${debt.from}-${debt.to}`}
+                style={styles.debtListRow}
+                onPress={() => openDebtDetail(debt)}
+              >
+                <RNView style={styles.debtListLeft}>
+                  {photoUrl ? (
+                    <Image
+                      source={{ uri: photoUrl }}
+                      style={styles.debtListAvatar}
+                      contentFit="cover"
+                      cachePolicy="disk"
+                      transition={150}
+                    />
+                  ) : (
+                    <RNView
+                      style={[
+                        styles.debtListAvatar,
+                        { backgroundColor: fallbackColor },
+                      ]}
+                    >
+                      <Text style={styles.debtListAvatarText}>
+                        {getInitial(counterpartName)}
+                      </Text>
+                    </RNView>
+                  )}
+                  <RNView>
+                    <Text style={styles.debtListName}>{counterpartName}</Text>
+                    <Text style={styles.debtListLabel}>{label}</Text>
                   </RNView>
+                </RNView>
+                <RNView style={styles.debtListRight}>
+                  <Text style={[styles.debtListAmount, { color: amountColor }]}>
+                    {formatCurrency(debt.amount)}
+                  </Text>
                   {canSettle && (
                     <TouchableOpacity
-                      style={styles.settleButton}
+                      style={styles.debtListSettleButton}
                       onPress={() => handleSettleDebt(debt)}
                     >
-                      <Text style={styles.settleButtonText}>Settle up</Text>
+                      <Text style={styles.debtListSettleText}>Settle up</Text>
+                    </TouchableOpacity>
+                  )}
+                  {canNudge && (
+                    <TouchableOpacity
+                      style={styles.debtListNudgeButton}
+                      onPress={() => handleSendDebtNudge(debt)}
+                    >
+                      <Text style={styles.debtListNudgeText}>Nudge</Text>
                     </TouchableOpacity>
                   )}
                 </RNView>
-              </RNView>
-              <Text style={styles.debtBreakdownText}>View breakdown</Text>
-            </Pressable>
-          );
-        })}
+              </Pressable>
+            );
+          })}
+        </RNView>
       </RNView>
     );
+  };
+
+  const handleSendDebtNudge = async (debt: SimplifiedDebt) => {
+    if (!houseId || !currentUserId) return;
+    try {
+      impactLight();
+      const debtorName = getMemberName(debt.from, debt.fromName);
+      await notificationService.sendAlfredNudge(houseId, currentUserId, 'NUDGE', {
+        subject: `Settle up ${formatCurrency(debt.amount)} with ${debtorName}`,
+        debtFrom: debt.from,
+        debtTo: debt.to,
+        amount: debt.amount,
+      });
+      Alert.alert('Alfred', 'Nudge sent.');
+    } catch (error: any) {
+      notifyError();
+      Alert.alert('Finance', error?.message || 'Unable to send nudge.');
+    }
   };
 
   const renderDebtDetailModal = () => {
@@ -948,7 +1054,7 @@ export default function FinanceScreen() {
               </Pressable>
             </RNView>
             <Text style={styles.debtDetailSubtitle}>
-              Net between you two, based on active transactions only.
+              Net between you two, based on unpaid transactions only.
             </Text>
 
             <RNView style={styles.balanceRow}>
@@ -990,23 +1096,17 @@ export default function FinanceScreen() {
                     transaction.payerName
                   );
                   const splitWith = transaction.splitWith || [];
-                  const fromInvolved =
-                    transaction.payerId === selectedDebt.from ||
-                    splitWith.includes(selectedDebt.from);
-                  const toInvolved =
-                    transaction.payerId === selectedDebt.to ||
-                    splitWith.includes(selectedDebt.to);
-                  const fromImpact = getNetImpact(transaction, selectedDebt.from);
-                  const toImpact = getNetImpact(transaction, selectedDebt.to);
-                  const impactMap = getImpactMap(transaction);
-                  const othersTotal = roundCurrency(
-                    Object.entries(impactMap).reduce((sum, [userId, value]) => {
-                      if (userId === selectedDebt.from || userId === selectedDebt.to) {
-                        return sum;
-                      }
-                      return sum + value;
-                    }, 0)
+                  const splitValues = computeSplitValues(transaction);
+                  const participants = Array.from(
+                    new Set([...splitWith, transaction.payerId])
                   );
+                  const splitItems = participants
+                    .map((userId) => ({
+                      userId,
+                      name: getMemberName(userId),
+                      share: splitValues[userId] ?? 0,
+                    }))
+                    .filter((item) => item.share > 0.009);
 
                   return (
                     <RNView
@@ -1017,63 +1117,32 @@ export default function FinanceScreen() {
                       {!!details && (
                         <Text style={styles.debtDetailMeta}>{details}</Text>
                       )}
-                      <Text style={styles.debtDetailMeta}>
-                        Paid by {payerName} - {formatCurrency(transaction.amount)}
-                      </Text>
-                      <RNView style={styles.debtDetailImpactRow}>
-                        {fromInvolved && (
-                          <RNView style={styles.debtDetailImpactItem}>
-                            <Text style={styles.debtDetailImpactLabel}>{fromName}</Text>
-                            <Text
-                              style={[
-                                styles.debtDetailImpactText,
-                                fromImpact < 0
-                                  ? styles.balanceNegative
-                                  : styles.balancePositive,
-                              ]}
-                            >
-                              {formatSignedCurrency(fromImpact)}
-                            </Text>
+                      <RNView style={styles.debtDetailSplitRow}>
+                        <RNView style={styles.debtDetailSplitLeft}>
+                          <Text style={styles.debtDetailSplitLabel}>Paid by</Text>
+                          <Text style={styles.debtDetailSplitName}>{payerName}</Text>
+                          <Text style={[styles.debtDetailSplitAmount, styles.balanceNegative]}>
+                            -{formatCurrency(Number(transaction.amount) || 0)}
+                          </Text>
+                        </RNView>
+                        <RNView style={styles.debtDetailSplitRight}>
+                          <Text style={styles.debtDetailSplitLabel}>Split</Text>
+                          <RNView style={styles.debtDetailSplitList}>
+                            {splitItems.map((item) => (
+                              <RNView
+                                key={item.userId}
+                                style={styles.debtDetailSplitItem}
+                              >
+                                <Text style={styles.debtDetailSplitName}>
+                                  {item.name}
+                                </Text>
+                                <Text style={styles.debtDetailSplitValue}>
+                                  {formatCurrency(item.share)}
+                                </Text>
+                              </RNView>
+                            ))}
                           </RNView>
-                        )}
-                        {Math.abs(othersTotal) > 0.009 && (
-                          <RNView style={styles.debtDetailImpactItem}>
-                            <Text
-                              style={[
-                                styles.debtDetailImpactLabel,
-                                styles.debtDetailOtherText,
-                              ]}
-                            >
-                              Others
-                            </Text>
-                            <Text
-                              style={[
-                                styles.debtDetailImpactText,
-                                styles.debtDetailOtherText,
-                                othersTotal < 0
-                                  ? styles.balanceNegative
-                                  : styles.balancePositive,
-                              ]}
-                            >
-                              {formatSignedCurrency(othersTotal)}
-                            </Text>
-                          </RNView>
-                        )}
-                        {toInvolved && (
-                          <RNView style={styles.debtDetailImpactItem}>
-                            <Text style={styles.debtDetailImpactLabel}>{toName}</Text>
-                            <Text
-                              style={[
-                                styles.debtDetailImpactText,
-                                toImpact < 0
-                                  ? styles.balanceNegative
-                                  : styles.balancePositive,
-                              ]}
-                            >
-                              {formatSignedCurrency(toImpact)}
-                            </Text>
-                          </RNView>
-                        )}
+                        </RNView>
                       </RNView>
                     </RNView>
                   );
@@ -1092,6 +1161,14 @@ export default function FinanceScreen() {
     const owingMembers = splitMembers.filter((memberId) => memberId !== item.payerId);
     const avatarsToShow = owingMembers.slice(0, 4);
     const extraCount = Math.max(0, owingMembers.length - avatarsToShow.length);
+    const paymentStatus = getTransactionPaymentStatus(item);
+    const splitValues = paymentStatus.splitValues;
+    const isPaid = paymentStatus.isPaid;
+    const totalParticipants = paymentStatus.totalParticipants;
+    const totalDue = paymentStatus.totalDue;
+    const totalPaid = paymentStatus.totalPaid;
+    const contestedCount = item.contestedBy?.length ?? 0;
+    const isContested = contestedCount > 0;
     const isConfirmed = isTransactionConfirmed(item);
     const isUserInSplit =
       !!currentUserId && (item.splitWith || []).includes(currentUserId);
@@ -1104,13 +1181,11 @@ export default function FinanceScreen() {
     const urgencyDisplay = isContested
       ? { ...urgencyTone, color: colors.danger, background: colors.dangerSoft }
       : urgencyTone;
-    const isRecent = ageDays < 1 && !isConfirmed;
-    const showUrgency = !isConfirmed && ageDays >= 3;
-    const contestedCount = item.contestedBy?.length ?? 0;
-    const isContested = contestedCount > 0;
+    const isRecent = ageDays < 1 && !isPaid;
+    const showUrgency = !isPaid && ageDays >= 3;
     const ringColor = isContested
       ? colors.warning
-      : isConfirmed
+      : isPaid
       ? colors.success
       : ageDays >= 7
       ? colors.danger
@@ -1121,29 +1196,22 @@ export default function FinanceScreen() {
       !!currentUserId && (item.contestedBy || []).includes(currentUserId);
     const isHighlighted = highlightTransactionId === item.transactionId;
 
-    const totalParticipants = item.splitWith?.length ?? 0;
-    const confirmedCount = item.confirmedBy?.length ?? 0;
+    let badgeLabel = 'Unpaid';
+    let badgeBackground = colors.dangerSoft;
+    let badgeColor = colors.danger;
 
-    let badgeLabel = 'Pending';
-    let badgeBackground = colors.accentSoft;
-    let badgeColor = colors.accent;
-
-    if (isConfirmed) {
-      badgeLabel = 'Confirmed';
+    if (isPaid) {
+      badgeLabel = 'Paid';
       badgeBackground = colors.successSoft;
       badgeColor = colors.success;
-    } else if (needsUserConfirmation) {
-      badgeLabel = `Confirmed ${confirmedCount}/${totalParticipants}`;
+    } else if (totalDue > 0 && totalPaid > 0) {
+      badgeLabel = `Paid ${formatCurrency(totalPaid)} / ${formatCurrency(totalDue)}`;
+      badgeBackground = colors.warningSoft;
+      badgeColor = colors.warning;
+    } else if (totalDue > 0 && totalParticipants > 0) {
+      badgeLabel = `Unpaid ${formatCurrency(totalDue)}`;
       badgeBackground = colors.dangerSoft;
       badgeColor = colors.danger;
-    } else if (isPayer) {
-      badgeLabel = `Confirmed ${confirmedCount}/${totalParticipants}`;
-      badgeBackground = colors.warningSoft;
-      badgeColor = colors.warning;
-    } else if (totalParticipants > 0) {
-      badgeLabel = `Confirmed ${confirmedCount}/${totalParticipants}`;
-      badgeBackground = colors.warningSoft;
-      badgeColor = colors.warning;
     }
 
     return (
@@ -1209,7 +1277,7 @@ export default function FinanceScreen() {
           <Text
             style={[
               styles.transactionAmount,
-              isConfirmed && styles.transactionAmountSettled,
+              isPaid && styles.transactionAmountSettled,
             ]}
           >
             {formatCurrency(item.amount)}
@@ -1222,15 +1290,17 @@ export default function FinanceScreen() {
               const name = getMemberName(memberId);
               const photoUrl = memberPhotoMap.get(memberId) ?? null;
               const fallbackColor = getFallbackColor(memberId);
-              const memberConfirmed = (item.confirmedBy || []).includes(memberId);
+              const memberShare = splitValues[memberId] ?? 0;
+              const memberPaid = Number(item.paidBy?.[memberId]) || 0;
+              const memberPaidUp = memberShare > 0 && memberPaid >= memberShare - 0.01;
               const memberContested = (item.contestedBy || []).includes(memberId);
-              const showSettledTick = isConfirmed;
+              const showSettledTick = memberPaidUp;
               return (
                 <RNView
                   key={`${item.transactionId}-${memberId}`}
                   style={[
                     styles.avatarChip,
-                    memberConfirmed && styles.avatarConfirmed,
+                    memberPaidUp && styles.avatarConfirmed,
                     memberContested && styles.avatarContested,
                     { marginLeft: index === 0 ? 0 : -8 },
                   ]}
@@ -1354,6 +1424,17 @@ export default function FinanceScreen() {
   const renderEmptyState = () => {
     if (loading) {
       return null;
+    }
+
+    if (transactions.length > 0) {
+      return (
+        <RNView style={styles.emptyStateContainer}>
+          <Text style={styles.emptyStateTitle}>All paid up</Text>
+          <Text style={styles.emptyStateSubtitle}>
+            Everything has been settled. Paid bills appear below.
+          </Text>
+        </RNView>
+      );
     }
 
     return (
@@ -1685,7 +1766,7 @@ export default function FinanceScreen() {
             <RNView style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Transactions</Text>
             <Text style={styles.sectionSubtitle}>
-              Confirm when you acknowledge a bill.
+              Unpaid expenses only. Confirm to acknowledge.
             </Text>
             </RNView>
           </RNView>
@@ -1699,7 +1780,7 @@ export default function FinanceScreen() {
               onPress={() => setShowSettled((prev) => !prev)}
             >
               <Text style={styles.sectionTitle}>
-                Confirmed Transactions ({settledTransactions.length})
+                Paid bills ({paidTransactions.length})
               </Text>
               <Text style={styles.settledToggleText}>
                 {showSettled ? 'Hide' : 'Show'}
@@ -1707,14 +1788,67 @@ export default function FinanceScreen() {
             </Pressable>
             {showSettled && (
               <RNView style={styles.settledList}>
-                {settledTransactions.length === 0 ? (
-                  <Text style={styles.emptyStateSubtitle}>No settled transactions yet.</Text>
+                {paidTransactions.length === 0 ? (
+                  <Text style={styles.emptyStateSubtitle}>No paid bills yet.</Text>
                 ) : (
-                  settledTransactions.map((transaction) => (
-                    <RNView key={transaction.transactionId} style={styles.settledCard}>
-                      {renderTransactionCard({ item: transaction })}
-                    </RNView>
-                  ))
+                  paidTransactions.map((transaction) => {
+                    const { title, details } = splitDescription(transaction.description);
+                    const payerName = getMemberName(
+                      transaction.payerId,
+                      transaction.payerName
+                    );
+                    const createdAt = transaction.createdAt?.toDate
+                      ? transaction.createdAt.toDate().toLocaleDateString()
+                      : 'Just now';
+                    return (
+                      <RNView key={transaction.transactionId} style={styles.settledCard}>
+                        <RNView style={styles.paymentRow}>
+                          <Text style={styles.paymentTitle}>{title}</Text>
+                          <RNView style={styles.paidBadge}>
+                            <Text style={styles.paidBadgeText}>Paid</Text>
+                          </RNView>
+                        </RNView>
+                        {!!details && <Text style={styles.paymentMeta}>{details}</Text>}
+                        <RNView style={styles.paymentRow}>
+                          <Text style={styles.paymentMeta}>Paid by {payerName}</Text>
+                          <Text style={styles.paymentAmount}>
+                            {formatCurrency(transaction.amount)}
+                          </Text>
+                        </RNView>
+                        <Text style={styles.paymentMeta}>{createdAt}</Text>
+                      </RNView>
+                    );
+                  })
+                )}
+
+                <RNView style={styles.settledDivider} />
+                <Text style={styles.settledSubheader}>Payments</Text>
+                {sortedSettlements.length === 0 ? (
+                  <Text style={styles.emptyStateSubtitle}>No payments recorded yet.</Text>
+                ) : (
+                  sortedSettlements.map((settlement) => {
+                    const fromName = getMemberName(settlement.from);
+                    const toName = getMemberName(settlement.to);
+                    const createdAt = settlement.createdAt?.toDate
+                      ? settlement.createdAt.toDate().toLocaleDateString()
+                      : 'Just now';
+                    return (
+                      <RNView key={settlement.settlementId} style={styles.settledCard}>
+                        <RNView style={styles.paymentRow}>
+                          <Text style={styles.paymentTitle}>
+                            {fromName} paid {toName}
+                          </Text>
+                          <Text style={styles.paymentAmount}>
+                            {formatCurrency(settlement.amount)}
+                          </Text>
+                        </RNView>
+                        <Text style={styles.paymentMeta}>{createdAt}</Text>
+                        {!!settlement.note && (
+                          <Text style={styles.paymentMeta}>{settlement.note}</Text>
+                        )}
+                      </RNView>
+                    );
+                  })
                 )}
               </RNView>
             )}
@@ -1895,6 +2029,132 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontSize: 12,
     color: colors.muted,
     marginBottom: 12,
+  },
+  debtSummaryCard: {
+    borderRadius: 16,
+    padding: 14,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 12,
+  },
+  debtSummaryLabel: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  debtSummaryAmount: {
+    fontSize: 24,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  debtSummaryMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  debtSummaryChip: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 8,
+  },
+  debtSummaryChipLabel: {
+    fontSize: 11,
+    color: colors.muted,
+  },
+  debtSummaryChipValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.accent,
+    marginTop: 2,
+  },
+  debtList: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 8,
+  },
+  debtListRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  debtListLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  debtListRight: {
+    alignItems: 'flex-end',
+  },
+  debtListAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    overflow: 'hidden',
+  },
+  debtListAvatarText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.onAccent,
+  },
+  debtListName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  debtListLabel: {
+    fontSize: 11,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  debtListAmount: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  debtListSettleButton: {
+    marginTop: 6,
+    backgroundColor: colors.accent,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minWidth: 100,
+    alignItems: 'center',
+    shadowColor: colors.accent,
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  debtListSettleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.onAccent,
+  },
+  debtListNudgeButton: {
+    marginTop: 6,
+    backgroundColor: colors.accentSoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minWidth: 100,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  debtListNudgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.accent,
   },
   sectionSubtitle: {
     fontSize: 13,
@@ -2239,11 +2499,62 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     color: colors.accent,
     fontWeight: '600',
   },
+  settledDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 12,
+  },
+  settledSubheader: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
   settledList: {
     marginTop: 12,
   },
   settledCard: {
     marginBottom: 8,
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  paymentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  paymentTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  paymentAmount: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.success,
+  },
+  paymentMeta: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 4,
+  },
+  paidBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: colors.successSoft,
+    borderWidth: 1,
+    borderColor: colors.success,
+  },
+  paidBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.success,
   },
   confirmButton: {
     backgroundColor: colors.success,
@@ -2459,6 +2770,49 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   debtDetailOtherText: {
     color: colors.muted,
+  },
+  debtDetailSplitRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  debtDetailSplitLeft: {
+    flex: 1,
+    marginRight: 12,
+    paddingRight: 12,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+  },
+  debtDetailSplitRight: {
+    flex: 1.2,
+  },
+  debtDetailSplitLabel: {
+    fontSize: 11,
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  debtDetailSplitName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  debtDetailSplitAmount: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  debtDetailSplitList: {
+    marginTop: 4,
+  },
+  debtDetailSplitItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  debtDetailSplitValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.accent,
   },
   stepLabel: {
     fontSize: 12,
@@ -2702,6 +3056,7 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     marginTop: 6,
   },
 });
+
 
 
 

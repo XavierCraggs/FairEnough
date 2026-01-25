@@ -50,9 +50,6 @@ export interface NotificationServiceError {
   originalError?: any;
 }
 
-const pickRandom = (options: string[]) =>
-  options[Math.floor(Math.random() * options.length)];
-
 const formatCurrency = (amount?: number) =>
   typeof amount === 'number' ? `$${amount.toFixed(2)}` : '$0.00';
 
@@ -64,64 +61,33 @@ export const getAlfredMessage = (
     case 'CHORE_DUE': {
       const choreName = metadata?.choreName || 'a chore';
       if (metadata?.action === 'completed') {
-        return pickRandom([
-          `Splendid news: ${choreName} has been completed. Well done.`,
-          `Excellent work! ${choreName} is now checked off.`,
-          `A tidy update: ${choreName} has been handled.`,
-        ]);
+        return `Chore completed: ${choreName}.`;
       }
       if (metadata?.action === 'assigned') {
-        return pickRandom([
-          `A quick note: ${choreName} has been assigned. Thank you in advance.`,
-          `If I may, ${choreName} has been assigned and awaits attention.`,
-          `Just so you know, ${choreName} is now assigned.`,
-        ]);
+        return `Chore assigned: ${choreName}.`;
       }
       if (metadata?.action === 'overdue') {
-        return pickRandom([
-          `Pardon me, ${choreName} is overdue. Might someone take a moment?`,
-          `A gentle reminder: ${choreName} has slipped past its due moment.`,
-          `If convenient, ${choreName} could use some attention today.`,
-        ]);
+        return `Overdue chore: ${choreName}.`;
       }
-      return pickRandom([
-        `I say, ${choreName} appears to be languishing. Might someone attend to it?`,
-        `A gentle reminder: ${choreName} is still waiting for attention.`,
-        `If I may, ${choreName} would love a helping hand today.`,
-      ]);
+      return `Chore due: ${choreName}.`;
     }
     case 'BILL_ADDED': {
       const amount = formatCurrency(metadata?.amount);
-      return pickRandom([
-        `Pardon me, a new expense of ${amount} has been recorded for the household.`,
-        `Just a heads-up: I have logged a bill totaling ${amount}.`,
-        `A new household expense (${amount}) has been added to the ledger.`,
-      ]);
+      const description = metadata?.description || 'House bill';
+      return `New bill: ${description} ? ${amount}.`;
     }
     case 'BILL_CONTESTED': {
       const reason = metadata?.reason || 'a question about the split';
-      return pickRandom([
-        `A gentle note: a bill has been contested due to ${reason}.`,
-        `I've received a dispute regarding a bill (${reason}).`,
-        `A housemate has flagged a bill for review: ${reason}.`,
-      ]);
+      return `Bill contested: ${reason}.`;
     }
     case 'MEETING_REQUEST': {
       const subject = metadata?.subject || 'a house meeting';
-      return pickRandom([
-        `Might we schedule ${subject}? A brief gathering could do wonders.`,
-        `A suggestion from the butler: perhaps it's time for ${subject}.`,
-        `If convenient, ${subject} would be most helpful for the household.`,
-      ]);
+      return `Meeting request: ${subject}.`;
     }
     case 'NUDGE':
     default: {
       const subject = metadata?.subject || 'a gentle reminder';
-      return pickRandom([
-        `If I may, a small reminder about ${subject}.`,
-        `Just a courteous nudge regarding ${subject}.`,
-        `Forgive the interruption—${subject} would appreciate attention.`,
-      ]);
+      return `Nudge: ${subject}.`;
     }
   }
 };

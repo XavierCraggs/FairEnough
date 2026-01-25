@@ -64,7 +64,7 @@ export default function ButlerTabBar({ state, descriptors, navigation }: BottomT
               accessibilityRole="button"
               accessibilityState={focused ? { selected: true } : {}}
               onPress={onPress}
-              style={styles.tabButton}
+              style={[styles.tabButton, focused && styles.tabButtonActive]}
             >
               {getIcon(options, focused, iconColor)}
             </Pressable>
@@ -113,11 +113,17 @@ const createStyles = (colors: AppTheme) =>
       elevation: 4,
     },
     tabButton: {
-      height: 44,
-      width: 44,
-      borderRadius: 22,
+      height: 40,
+      minWidth: 48,
+      paddingHorizontal: 14,
+      borderRadius: 999,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    tabButtonActive: {
+      backgroundColor: hexToRgba(colors.accent, 0.18),
+      borderWidth: 1,
+      borderColor: hexToRgba(colors.accent, 0.35),
     },
     centerSlot: {
       width: 64,
