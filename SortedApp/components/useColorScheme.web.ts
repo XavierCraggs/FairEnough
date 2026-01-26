@@ -3,6 +3,11 @@
 // and the first render on the client. Typically, web developers will use CSS media queries
 // to render different styles on the client and server, these aren't directly supported in React Native
 // but can be achieved using a styling library like Nativewind.
+import { useThemePreference } from '@/contexts/ThemeContext';
+
 export function useColorScheme() {
+  const { preference } = useThemePreference();
+  if (preference === 'light') return 'light';
+  if (preference === 'dark') return 'dark';
   return 'light';
 }

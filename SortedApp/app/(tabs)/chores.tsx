@@ -24,6 +24,7 @@ import choreService, {
   ChoreServiceError,
   ROLLING_WINDOW_DAYS,
 } from '../../services/choreService';
+import houseService from '../../services/houseService';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../api/firebase';
 import Slider from '@react-native-community/slider';
@@ -221,6 +222,7 @@ export default function ChoresScreen() {
 
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [membersLoading, setMembersLoading] = useState(true);
+  const [isPremiumHouse, setIsPremiumHouse] = useState(false);
 
   const [fairnessLoading, setFairnessLoading] = useState(false);
   const [averagePoints, setAveragePoints] = useState<number | null>(null);
@@ -243,6 +245,13 @@ export default function ChoresScreen() {
   const [pointsInput, setPointsInput] = useState(5);
   const [assignedToInput, setAssignedToInput] = useState<string | null>(null);
   const [frequencyInput, setFrequencyInput] = useState<FrequencyOption>('one-time');
+  const [assignmentModeInput, setAssignmentModeInput] = useState<'fair' | 'weeklyLock'>(
+    'fair'
+  );
+  const [lockDurationDaysInput, setLockDurationDaysInput] = useState(7);
+  const [eligibleAssigneesInput, setEligibleAssigneesInput] = useState<string[]>(
+    []
+  );
   const [submitting, setSubmitting] = useState(false);
   const [setupStep, setSetupStep] = useState(1);
   const [dueDateInput, setDueDateInput] = useState<Date>(startOfDay(new Date()));
@@ -332,6 +341,62 @@ export default function ChoresScreen() {
     return () => unsubscribe();
   }, [houseId]);
 
+  useEffect(() => {
+    if (frequencyInput === 'one-time' && assignmentModeInput === 'weeklyLock') {
+      setAssignmentModeInput('fair');
+    }
+  }, [frequencyInput, assignmentModeInput]);
+
+  useEffect(() => {
+    if (!members.length) {
+      return;
+    }
+
+    const allIds = members.map((member) => member.userId);
+
+    if (!isPremiumHouse) {
+      setEligibleAssigneesInput(allIds);
+      return;
+    }
+
+    if (editingChore) {
+      const stored = editingChore.eligibleAssignees;
+      if (stored && stored.length) {
+        setEligibleAssigneesInput(stored);
+      } else {
+        setEligibleAssigneesInput(allIds);
+      }
+      return;
+    }
+
+    if (!eligibleAssigneesInput.length) {
+      setEligibleAssigneesInput(allIds);
+    }
+  }, [members, editingChore, isPremiumHouse, eligibleAssigneesInput.length]);
+
+  useEffect(() => {
+    if (!houseId) {
+      setIsPremiumHouse(false);
+      return;
+    }
+
+    let isMounted = true;
+    houseService
+      .getHouse(houseId)
+      .then((house) => {
+        if (!isMounted) return;
+        setIsPremiumHouse(!!house?.isPremium);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setIsPremiumHouse(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [houseId]);
+
   const loadFairness = useCallback(async () => {
     if (!houseId) return;
     try {
@@ -367,6 +432,9 @@ export default function ChoresScreen() {
     setPointsInput(5);
     setAssignedToInput(null);
     setFrequencyInput('one-time');
+    setAssignmentModeInput('fair');
+    setLockDurationDaysInput(7);
+    setEligibleAssigneesInput(members.map((member) => member.userId));
     setDueDateInput(startOfDay(new Date()));
     setShowDueDatePicker(false);
     setSetupStep(1);
@@ -385,6 +453,13 @@ export default function ChoresScreen() {
     setPointsInput(chore.points);
     setAssignedToInput(chore.assignedTo);
     setFrequencyInput(chore.frequency);
+    setAssignmentModeInput(chore.assignmentMode ?? 'fair');
+    setLockDurationDaysInput(chore.lockDurationDays ?? 7);
+    if (chore.eligibleAssignees && chore.eligibleAssignees.length) {
+      setEligibleAssigneesInput(chore.eligibleAssignees);
+    } else {
+      setEligibleAssigneesInput(members.map((member) => member.userId));
+    }
     setDueDateInput(
       chore.nextDueAt?.toDate ? startOfDay(chore.nextDueAt.toDate()) : startOfDay(new Date())
     );
@@ -417,6 +492,13 @@ export default function ChoresScreen() {
     setSubmitting(true);
 
     try {
+      const eligibleAssignees =
+        isPremiumHouse &&
+        eligibleAssigneesInput.length &&
+        eligibleAssigneesInput.length !== members.length
+          ? eligibleAssigneesInput
+          : null;
+
       if (editingChore) {
         await choreService.updateChore(
           houseId,
@@ -427,6 +509,9 @@ export default function ChoresScreen() {
             points,
             frequency: frequencyInput,
             dueDate: dueDateInput,
+            assignmentMode: assignmentModeInput,
+            lockDurationDays: lockDurationDaysInput,
+            eligibleAssignees,
           },
           user.uid
         );
@@ -449,6 +534,9 @@ export default function ChoresScreen() {
           frequency: frequencyInput,
           dueDate: dueDateInput,
           createdBy: user.uid,
+          assignmentMode: assignmentModeInput,
+          lockDurationDays: lockDurationDaysInput,
+          eligibleAssignees,
         });
       }
 
@@ -481,6 +569,36 @@ export default function ChoresScreen() {
       }
       setSetupStep(3);
     }
+  };
+
+  const handleSelectAssignmentMode = (mode: 'fair' | 'weeklyLock') => {
+    if (mode === 'weeklyLock' && !isPremiumHouse) {
+      Alert.alert(
+        'Premium feature',
+        'Weekly role lock is part of House Pass. Upgrade to enable it.'
+      );
+      return;
+    }
+    setAssignmentModeInput(mode);
+    if (mode === 'weeklyLock') {
+      setLockDurationDaysInput(7);
+    }
+  };
+
+  const handleToggleEligible = (memberId: string) => {
+    if (!isPremiumHouse) {
+      Alert.alert(
+        'Premium feature',
+        'Custom assignment pools are part of House Pass.'
+      );
+      return;
+    }
+    setEligibleAssigneesInput((current) => {
+      const next = current.includes(memberId)
+        ? current.filter((id) => id !== memberId)
+        : [...current, memberId];
+      return next.length ? next : current;
+    });
   };
 
   const handleCompleteChore = async (chore: ChoreData) => {
@@ -870,6 +988,25 @@ export default function ChoresScreen() {
     );
   };
 
+  const renderMissedInfo = (chore: ChoreData) => {
+    const missedCount = chore.missedCount ?? 0;
+    if (missedCount <= 0 || chore.status === 'completed') return null;
+    const label = missedCount === 1 ? 'Missed 1 time' : `Missed ${missedCount} times`;
+    return (
+      <RNView style={styles.missedRow}>
+        <RNView style={styles.missedBadge}>
+          <Text style={styles.missedBadgeText}>{label}</Text>
+        </RNView>
+        <TouchableOpacity
+          style={styles.missedReassignButton}
+          onPress={() => openEditModal(chore)}
+        >
+          <Text style={styles.missedReassignText}>Reassign</Text>
+        </TouchableOpacity>
+      </RNView>
+    );
+  };
+
   const renderHistoryMeta = (chore: ChoreData) => {
     if (!chore.lastCompletedAt || !chore.lastCompletedBy) return null;
     const completedBy = getAssignedName(chore.lastCompletedBy);
@@ -1011,6 +1148,7 @@ export default function ChoresScreen() {
               </RNView>
             </RNView>
             {!isCompact && renderLastCompleted(item)}
+            {!isCompact && renderMissedInfo(item)}
           </>
         ) : (
           <RNView style={styles.historyMetaRow}>{renderHistoryMeta(item)}</RNView>
@@ -1110,17 +1248,7 @@ export default function ChoresScreen() {
               </Pressable>
             )}
             {!isCompleted && !isRecurring && (
-              <Pressable
-                style={styles.menuItem}
-                onPress={() => {
-                  setOpenMenuChoreId(null);
-                  handleDeleteChore(item);
-                }}
-              >
-                <Text style={[styles.menuItemText, { color: colors.danger }]}>
-                  Delete
-                </Text>
-              </Pressable>
+              null
             )}
           </RNView>
         )}
@@ -1600,6 +1728,63 @@ export default function ChoresScreen() {
                   ))}
                 </RNView>
 
+                {frequencyInput === 'daily' && (
+                  <>
+                    <Text style={styles.modalLabel}>Assignment</Text>
+                    <RNView style={styles.assignmentToggleRow}>
+                      <Pressable
+                        style={[
+                          styles.assignmentToggleButton,
+                          assignmentModeInput === 'fair' && styles.assignmentToggleActive,
+                        ]}
+                        onPress={() => handleSelectAssignmentMode('fair')}
+                      >
+                        <Text
+                          style={[
+                            styles.assignmentToggleText,
+                            assignmentModeInput === 'fair' && styles.assignmentToggleTextActive,
+                          ]}
+                        >
+                          Fair rotation
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={[
+                          styles.assignmentToggleButton,
+                          assignmentModeInput === 'weeklyLock' &&
+                            styles.assignmentToggleActive,
+                        ]}
+                        onPress={() => handleSelectAssignmentMode('weeklyLock')}
+                      >
+                        <RNView style={styles.assignmentToggleLabel}>
+                          <Text
+                            style={[
+                              styles.assignmentToggleText,
+                              assignmentModeInput === 'weeklyLock' &&
+                                styles.assignmentToggleTextActive,
+                            ]}
+                          >
+                            Weekly role lock
+                          </Text>
+                          {!isPremiumHouse && (
+                            <RNView style={styles.premiumTag}>
+                              <FontAwesome
+                                name="lock"
+                                size={10}
+                                color={styles.premiumTagText.color}
+                              />
+                              <Text style={styles.premiumTagText}>Premium</Text>
+                            </RNView>
+                          )}
+                        </RNView>
+                      </Pressable>
+                    </RNView>
+                    <Text style={styles.helperText}>
+                      Weekly role lock keeps the same person for a week, then reassigns fairly.
+                    </Text>
+                  </>
+                )}
+
                 <Text style={styles.modalLabel}>
                   {frequencyInput === 'one-time' ? 'Due date' : 'First due date'}
                 </Text>
@@ -1699,6 +1884,46 @@ export default function ChoresScreen() {
                     </TouchableOpacity>
                   ))}
                 </RNView>
+                <Text style={styles.modalLabel}>Eligible housemates</Text>
+                <RNView style={styles.dropdownContainer}>
+                  {members.map((member) => {
+                    const isSelected = eligibleAssigneesInput.includes(member.userId);
+                    return (
+                      <TouchableOpacity
+                        key={member.userId}
+                        style={[
+                          styles.dropdownChip,
+                          isSelected && styles.dropdownChipActive,
+                          !isPremiumHouse && styles.dropdownChipDisabled,
+                        ]}
+                        onPress={() => handleToggleEligible(member.userId)}
+                        disabled={!isPremiumHouse}
+                      >
+                        <Text
+                          style={[
+                            styles.dropdownChipText,
+                            isSelected && styles.dropdownChipTextActive,
+                          ]}
+                        >
+                          {getFirstName(member.name, 'Housemate')}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </RNView>
+                {!isPremiumHouse && (
+                  <RNView style={styles.premiumHelperRow}>
+                    <FontAwesome name="lock" size={12} color={styles.premiumHelperText.color} />
+                    <Text style={styles.premiumHelperText}>
+                      Premium to customize assignment pool.
+                    </Text>
+                  </RNView>
+                )}
+                {isPremiumHouse && eligibleAssigneesInput.length === 1 && (
+                  <Text style={styles.warningText}>
+                    Only one person selected. They will get this chore every time.
+                  </Text>
+                )}
               </>
             )}
 
@@ -1750,6 +1975,19 @@ export default function ChoresScreen() {
               >
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
+              {editingChore && (
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalDangerButton]}
+                  onPress={() => {
+                    if (!editingChore) return;
+                    closeModal();
+                    handleDeleteChore(editingChore);
+                  }}
+                  disabled={submitting}
+                >
+                  <Text style={styles.modalDangerText}>Delete</Text>
+                </TouchableOpacity>
+              )}
               {!editingChore && setupStep > 1 && (
                 <TouchableOpacity
                   style={[styles.modalButton, styles.modalSecondaryButton]}
@@ -2076,6 +2314,36 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontSize: 12,
     color: colors.muted,
     marginTop: 4,
+  },
+  missedRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  missedBadge: {
+    backgroundColor: colors.warningSoft,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  missedBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.warning,
+  },
+  missedReassignButton: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  missedReassignText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.accent,
   },
   historyMetaRow: {
     marginTop: 6,
@@ -2592,6 +2860,51 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   densityOptionTextActive: {
     color: colors.onAccent,
   },
+  assignmentToggleRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderRadius: 999,
+    padding: 4,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  assignmentToggleButton: {
+    flex: 1,
+    borderRadius: 999,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  assignmentToggleLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  assignmentToggleActive: {
+    backgroundColor: colors.accent,
+  },
+  assignmentToggleText: {
+    fontSize: 12,
+    color: colors.muted,
+    fontWeight: '600',
+  },
+  assignmentToggleTextActive: {
+    color: colors.onAccent,
+  },
+  premiumTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: colors.warningSoft,
+  },
+  premiumTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.warning,
+    marginLeft: 4,
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: colors.overlay,
@@ -2761,6 +3074,9 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     marginRight: 8,
     marginBottom: 6,
   },
+  dropdownChipDisabled: {
+    opacity: 0.6,
+  },
   dropdownChipActive: {
     backgroundColor: colors.accent,
   },
@@ -2771,6 +3087,23 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   dropdownChipTextActive: {
     color: colors.onAccent,
     fontWeight: '600',
+  },
+  premiumHelperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  premiumHelperText: {
+    fontSize: 12,
+    color: colors.warning,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  warningText: {
+    fontSize: 12,
+    color: colors.warning,
+    fontWeight: '600',
+    marginTop: 4,
   },
   modalActionsRow: {
     flexDirection: 'row',
@@ -2789,6 +3122,11 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   modalSecondaryButton: {
     backgroundColor: colors.accentSoft,
   },
+  modalDangerButton: {
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
   modalPrimaryButton: {
     backgroundColor: colors.accent,
   },
@@ -2799,6 +3137,10 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   modalSecondaryText: {
     color: colors.accent,
     fontWeight: '600',
+  },
+  modalDangerText: {
+    color: colors.danger,
+    fontWeight: '700',
   },
   modalPrimaryText: {
     color: colors.onAccent,

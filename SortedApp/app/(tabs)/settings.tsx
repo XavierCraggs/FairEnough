@@ -25,7 +25,7 @@ import profileService from '@/services/profileService';
 import * as ImagePicker from 'expo-image-picker';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useAppTheme } from '@/hooks/useAppTheme';
-import { AppTheme } from '@/constants/AppColors';
+import { AppTheme, themeLabels, themeOrder, ThemeName } from '@/constants/AppColors';
 import { useThemePreference } from '@/contexts/ThemeContext';
 import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,6 +35,8 @@ import choreService from '@/services/choreService';
 import financeService from '@/services/financeService';
 import calendarService from '@/services/calendarService';
 import { Image } from 'expo-image';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { db } from '@/api/firebase';
 
 const SUPPORT_EMAIL = 'support@sortedapp.app';
 const HELP_CENTER_URL = 'https://sortedapp.app/help';
@@ -56,7 +58,7 @@ export default function SettingsScreen() {
     outputRange: [0, 0.92],
     extrapolate: 'clamp',
   });
-  const { preference, setPreference } = useThemePreference();
+  const { preference, setPreference, themeName, setThemeName } = useThemePreference();
   const isAdmin = !!currentUserId && ADMIN_UIDS.includes(currentUserId);
 
   const [loading, setLoading] = useState(false);
@@ -70,6 +72,13 @@ export default function SettingsScreen() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [leaveLoading, setLeaveLoading] = useState(false);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [houseNameEditing, setHouseNameEditing] = useState(false);
+  const [houseNameInput, setHouseNameInput] = useState('');
+  const [houseNameSaving, setHouseNameSaving] = useState(false);
+  const [members, setMembers] = useState<
+    Array<{ userId: string; name: string; photoUrl?: string | null }>
+  >([]);
 
   useEffect(() => {
     if (!houseId) {
@@ -91,6 +100,41 @@ export default function SettingsScreen() {
 
     fetchHouse();
   }, [houseId]);
+
+  useEffect(() => {
+    if (!houseId) {
+      setMembers([]);
+      return;
+    }
+
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, where('houseId', '==', houseId));
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const nextMembers = snapshot.docs.map((doc) => {
+          const data = doc.data() as any;
+          return {
+            userId: doc.id,
+            name: data.name || 'Unnamed',
+            photoUrl: data.photoUrl || data.photoURL || null,
+          };
+        });
+        setMembers(nextMembers);
+      },
+      () => {
+        setMembers([]);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [houseId]);
+
+  useEffect(() => {
+    if (!houseData?.name) return;
+    setHouseNameInput(houseData.name);
+  }, [houseData?.name]);
 
   const currentPhotoUrl = photoPreview || userProfile?.photoUrl || null;
 
@@ -295,6 +339,61 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleStartHouseNameEdit = () => {
+    if (!houseData?.name) return;
+    setHouseNameInput(houseData.name);
+    setHouseNameEditing(true);
+  };
+
+  const handleCancelHouseNameEdit = () => {
+    setHouseNameEditing(false);
+    if (houseData?.name) {
+      setHouseNameInput(houseData.name);
+    }
+  };
+
+  const handleSaveHouseName = async () => {
+    if (!houseId || !currentUserId) return;
+    const nextName = houseNameInput.trim();
+    if (!nextName) {
+      Alert.alert('House name', 'Please enter a house name.');
+      return;
+    }
+    if (nextName === houseData?.name) {
+      setHouseNameEditing(false);
+      return;
+    }
+    setHouseNameSaving(true);
+    try {
+      await houseService.updateHouseName(houseId, currentUserId, nextName);
+      setHouseData((prev) => (prev ? { ...prev, name: nextName } : prev));
+      setHouseNameEditing(false);
+    } catch (error: any) {
+      Alert.alert('House name', error?.message || 'Unable to update house name.');
+    } finally {
+      setHouseNameSaving(false);
+    }
+  };
+
+  const handleToggleAvoidRepeat = async (value: boolean) => {
+    if (!houseId || !currentUserId) {
+      return;
+    }
+    if (preferencesSaving) {
+      return;
+    }
+    setPreferencesSaving(true);
+    try {
+      await houseService.updateHousePreferences(houseId, currentUserId, {
+        choreRotationAvoidRepeat: value,
+      });
+    } catch (error: any) {
+      Alert.alert('Settings', error?.message || 'Unable to update chore settings.');
+    } finally {
+      setPreferencesSaving(false);
+    }
+  };
+
   const premiumExpiresAt =
     houseData?.premium?.expiresAt?.toDate?.() ?? null;
   const premiumStatusLine = houseData?.isPremium
@@ -302,6 +401,7 @@ export default function SettingsScreen() {
       ? `Renews on ${premiumExpiresAt.toLocaleDateString()}`
       : 'House Pass is active.'
     : 'Unlock calendar sync, receipt OCR, and advanced analytics for your house.';
+  const avoidRepeat = houseData?.choreRotationAvoidRepeat !== false;
 
   const handleSendTestNotification = async (type: string) => {
     if (!houseId || !currentUserId) return;
@@ -463,14 +563,126 @@ export default function SettingsScreen() {
             <ActivityIndicator color={colors.accent} />
           ) : houseData ? (
             <>
-              <Text style={styles.detailText}>{houseData.name}</Text>
+              <RNView style={styles.houseHeaderRow}>
+                {houseNameEditing ? (
+                  <TextInput
+                    style={styles.houseNameInput}
+                    value={houseNameInput}
+                    onChangeText={setHouseNameInput}
+                    placeholder="House name"
+                    placeholderTextColor={colors.muted}
+                  />
+                ) : (
+                  <Text style={styles.detailText}>{houseData.name}</Text>
+                )}
+                {houseNameEditing ? (
+                  <RNView style={styles.houseNameActions}>
+                    <TouchableOpacity
+                      style={styles.houseNameActionButton}
+                      onPress={handleCancelHouseNameEdit}
+                      disabled={houseNameSaving}
+                    >
+                      <Text style={styles.houseNameActionText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.houseNameActionButton,
+                        styles.houseNameActionPrimary,
+                        houseNameSaving && styles.buttonDisabled,
+                      ]}
+                      onPress={handleSaveHouseName}
+                      disabled={houseNameSaving}
+                    >
+                      {houseNameSaving ? (
+                        <ActivityIndicator color={colors.onAccent} />
+                      ) : (
+                        <Text style={styles.houseNameActionPrimaryText}>Save</Text>
+                      )}
+                    </TouchableOpacity>
+                  </RNView>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.houseEditButton}
+                    onPress={handleStartHouseNameEdit}
+                  >
+                    <FontAwesome name="pencil" size={14} color={colors.accent} />
+                  </TouchableOpacity>
+                )}
+              </RNView>
               <RNView style={styles.inviteRow}>
                 <Text style={styles.inviteCodeText}>{houseData.inviteCode}</Text>
                 <TouchableOpacity style={styles.copyButton} onPress={handleCopyInviteCode}>
                   <Text style={styles.copyButtonText}>Copy</Text>
                 </TouchableOpacity>
               </RNView>
-              <Text style={styles.helperText}>Share this invite code to add housemates.</Text>
+              <Text style={styles.inviteHelperText}>
+                Share this invite code to add housemates.
+              </Text>
+              <Text style={styles.subsectionTitle}>Members</Text>
+              <RNView style={styles.memberList}>
+                {members.length === 0 ? (
+                  <Text style={styles.helperText}>No members found.</Text>
+                ) : (
+                  members.map((member) => (
+                    <RNView key={member.userId} style={styles.memberChip}>
+                      {member.photoUrl ? (
+                        <Image
+                          source={{ uri: member.photoUrl }}
+                          style={styles.memberAvatar}
+                          contentFit="cover"
+                          cachePolicy="disk"
+                          transition={150}
+                        />
+                      ) : (
+                        <RNView style={styles.memberAvatarFallback}>
+                          <Text style={styles.memberAvatarText}>
+                            {getFirstName(member.name, 'U')[0]}
+                          </Text>
+                        </RNView>
+                      )}
+                      <Text style={styles.memberNameText}>
+                        {getFirstName(member.name, 'Housemate')}
+                      </Text>
+                    </RNView>
+                  ))
+                )}
+              </RNView>
+              <RNView style={[styles.settingRow, styles.settingRowTight]}>
+                <RNView style={styles.settingIcon}>
+                  <FontAwesome name="repeat" size={16} color={colors.accent} />
+                </RNView>
+                <RNView style={styles.settingBody}>
+                  <Text style={styles.settingLabel}>Chore rotation</Text>
+                  <Text style={styles.helperText}>
+                    Avoid assigning the same person twice in a row.
+                  </Text>
+                </RNView>
+              </RNView>
+              <RNView style={styles.toggleGroup}>
+                {[true, false].map((value) => {
+                  const isActive = avoidRepeat === value;
+                  return (
+                    <TouchableOpacity
+                      key={value ? 'avoid' : 'allow'}
+                      style={[
+                        styles.toggleChip,
+                        isActive && styles.toggleChipActive,
+                      ]}
+                      onPress={() => handleToggleAvoidRepeat(value)}
+                      disabled={preferencesSaving}
+                    >
+                      <Text
+                        style={[
+                          styles.toggleChipText,
+                          isActive && styles.toggleChipTextActive,
+                        ]}
+                      >
+                        {value ? 'Avoid repeats' : 'Allow repeats'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </RNView>
             </>
           ) : (
             <Text style={styles.description}>House details are unavailable right now.</Text>
@@ -559,6 +771,31 @@ export default function SettingsScreen() {
                     ]}
                   >
                     {value === 'system' ? 'System' : value === 'light' ? 'Light' : 'Dark'}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </RNView>
+          <RNView style={styles.settingRow}>
+            <RNView style={styles.settingIcon}>
+              <FontAwesome name="paint-brush" size={16} color={colors.accent} />
+            </RNView>
+            <RNView style={styles.settingBody}>
+              <Text style={styles.settingLabel}>Color theme</Text>
+              <Text style={styles.helperText}>Pick a palette you like.</Text>
+            </RNView>
+          </RNView>
+          <RNView style={styles.themeGroup}>
+            {themeOrder.map((value) => {
+              const isActive = themeName === value;
+              return (
+                <TouchableOpacity
+                  key={value}
+                  style={[styles.themeChip, isActive && styles.themeChipActive]}
+                  onPress={() => setThemeName(value as ThemeName)}
+                >
+                  <Text style={[styles.themeChipText, isActive && styles.themeChipTextActive]}>
+                    {themeLabels[value]}
                   </Text>
                 </TouchableOpacity>
               );
@@ -853,10 +1090,11 @@ const createStyles = (colors: AppTheme) =>
     borderColor: colors.border,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
     color: colors.accent,
-    marginBottom: 8,
+    letterSpacing: 0.4,
+    marginBottom: 10,
   },
   description: {
     fontSize: 16,
@@ -872,6 +1110,11 @@ const createStyles = (colors: AppTheme) =>
   helperText: {
     fontSize: 14,
     color: colors.muted,
+  },
+  inviteHelperText: {
+    fontSize: 14,
+    color: colors.muted,
+    marginBottom: 8,
   },
   profileRow: {
     flexDirection: 'row',
@@ -920,6 +1163,11 @@ const createStyles = (colors: AppTheme) =>
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  settingRowTight: {
+    borderBottomWidth: 0,
+    paddingTop: 16,
+    paddingBottom: 0,
+  },
   settingIcon: {
     width: 32,
     height: 32,
@@ -933,9 +1181,18 @@ const createStyles = (colors: AppTheme) =>
     flex: 1,
   },
   settingLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.accent,
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  subsectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.muted,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 16,
+    marginBottom: 8,
   },
   settingBadge: {
     fontSize: 12,
@@ -992,6 +1249,127 @@ const createStyles = (colors: AppTheme) =>
     fontWeight: '600',
   },
   toggleChipTextActive: {
+    color: colors.onAccent,
+  },
+  houseHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  houseEditButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  houseNameInput: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 16,
+    color: colors.text,
+    backgroundColor: colors.surface,
+    marginRight: 8,
+  },
+  houseNameActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  houseNameActionButton: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: colors.accentSoft,
+    marginLeft: 6,
+  },
+  houseNameActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  houseNameActionPrimary: {
+    backgroundColor: colors.accent,
+  },
+  houseNameActionPrimaryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.onAccent,
+  },
+  memberList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  memberChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  memberAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    marginRight: 6,
+  },
+  memberAvatarFallback: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    marginRight: 6,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberAvatarText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  memberNameText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  themeGroup: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  themeChip: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  themeChipActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  themeChipText: {
+    fontSize: 13,
+    color: colors.accent,
+    fontWeight: '600',
+  },
+  themeChipTextActive: {
     color: colors.onAccent,
   },
   inviteRow: {

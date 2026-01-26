@@ -81,6 +81,12 @@ import {
     lastCompletedBy: string | null; // UID of last user who completed it
     lastCompletedAt: Timestamp | null;
     nextDueAt?: Timestamp | null;
+    assignmentMode?: 'fair' | 'weeklyLock';
+    lockStartAt?: Timestamp | null;
+    lockDurationDays?: number | null;
+    eligibleAssignees?: string[] | null;
+    missedCount?: number;
+    lastMissedAt?: Timestamp | null;
     totalCompletions: number; // Track how many times this chore has been done
     createdBy: string;
     createdAt: any;
@@ -109,6 +115,9 @@ import {
     frequency: 'daily' | 'weekly' | 'monthly' | 'one-time';
     dueDate?: Date;
     createdBy: string;
+    assignmentMode?: 'fair' | 'weeklyLock';
+    lockDurationDays?: number;
+    eligibleAssignees?: string[] | null;
   }
   
   /**
@@ -161,6 +170,10 @@ import {
         const choreRef = collection(db, 'houses', input.houseId, 'chores');
         const now = new Date();
         const dueDate = input.dueDate ? startOfDay(input.dueDate) : startOfDay(now);
+        const assignmentMode = input.assignmentMode ?? 'fair';
+        const lockDurationDays =
+          assignmentMode === 'weeklyLock' ? input.lockDurationDays ?? 7 : null;
+
         const newChore = {
           houseId: input.houseId,
           title: input.title.trim(),
@@ -172,6 +185,15 @@ import {
           lastCompletedBy: null,
           lastCompletedAt: null,
           nextDueAt: Timestamp.fromDate(dueDate),
+          assignmentMode,
+          lockStartAt:
+            assignmentMode === 'weeklyLock' && input.assignedTo
+              ? Timestamp.fromDate(startOfDay(now))
+              : null,
+          lockDurationDays,
+          eligibleAssignees: input.eligibleAssignees ?? null,
+          missedCount: 0,
+          lastMissedAt: null,
           totalCompletions: 0,
           createdBy: input.createdBy,
           createdAt: serverTimestamp(),
@@ -184,8 +206,13 @@ import {
         if (!assignedTo) {
           const autoAssignee = await this.pickFairAssignee(input.houseId, null);
           if (autoAssignee) {
+            const lockStartAt =
+              assignmentMode === 'weeklyLock'
+                ? Timestamp.fromDate(startOfDay(now))
+                : null;
             await updateDoc(docRef, {
               assignedTo: autoAssignee,
+              lockStartAt,
               updatedAt: serverTimestamp(),
             });
             assignedTo = autoAssignee;
@@ -273,6 +300,8 @@ import {
             lastCompletedBy: userId,
             lastCompletedAt: serverTimestamp(),
             totalCompletions: increment(1),
+            missedCount: 0,
+            lastMissedAt: null,
             updatedAt: serverTimestamp(),
             nextDueAt,
           });
@@ -308,7 +337,7 @@ import {
           } as ChoreData;
         });
 
-        if (choreData.frequency !== 'one-time') {
+        if (choreData.frequency !== 'one-time' && choreData.assignmentMode !== 'weeklyLock') {
           await this.assignChoreByFairness(houseId, choreId, {
             excludeUserId: userId,
           });
@@ -381,9 +410,14 @@ import {
         const chore = choreDoc.data() as ChoreData;
 
         // Update chore assignment
+        const lockStartAt =
+          chore.assignmentMode === 'weeklyLock'
+            ? Timestamp.fromDate(startOfDay(new Date()))
+            : null;
         await updateDoc(choreRef, {
           assignedTo: assignedTo,
           status: 'pending', // Reset status when reassigned
+          lockStartAt: lockStartAt ?? chore.lockStartAt ?? null,
           updatedAt: serverTimestamp(),
         });
 
@@ -440,7 +474,16 @@ import {
       houseId: string,
       choreId: string,
       updates: Partial<
-        Pick<ChoreData, 'title' | 'description' | 'points' | 'frequency'> & {
+        Pick<
+          ChoreData,
+          | 'title'
+          | 'description'
+          | 'points'
+          | 'frequency'
+          | 'assignmentMode'
+          | 'lockDurationDays'
+          | 'eligibleAssignees'
+        > & {
           dueDate?: Date;
         }
       >,
@@ -462,6 +505,15 @@ import {
           ...updates,
           updatedAt: serverTimestamp(),
         };
+
+        if (updates.assignmentMode === 'weeklyLock') {
+          patch.lockDurationDays = updates.lockDurationDays ?? 7;
+          patch.lockStartAt = Timestamp.fromDate(startOfDay(new Date()));
+        }
+        if (updates.assignmentMode === 'fair') {
+          patch.lockStartAt = null;
+          patch.lockDurationDays = null;
+        }
 
         if (updates.dueDate) {
           patch.nextDueAt = Timestamp.fromDate(startOfDay(updates.dueDate));
@@ -689,7 +741,15 @@ import {
         if (!houseId || !userId) return;
 
         await this.verifyUserInHouse(userId, houseId);
-        const members = await this.getHouseMembers(houseId);
+        const houseDoc = await getDoc(doc(db, 'houses', houseId));
+        const houseData = houseDoc.data() as {
+          members?: string[];
+          isPremium?: boolean;
+          choreRotationAvoidRepeat?: boolean;
+        } | undefined;
+        const members = houseData?.members ?? [];
+        const avoidRepeat = houseData?.choreRotationAvoidRepeat !== false;
+        const isPremium = !!houseData?.isPremium;
         if (!members.length) return;
 
         const since = addDays(new Date(), -ROLLING_WINDOW_DAYS);
@@ -725,38 +785,126 @@ import {
             return;
           }
 
-          const shouldAssign = isDue && !chore.assignedTo;
-          const targetAssignee = shouldAssign
-            ? this.pickFairAssigneeFromList(
-                orderedMembers,
+          const assignmentMode = chore.assignmentMode ?? 'fair';
+          const weeklyLockEnabled = assignmentMode === 'weeklyLock' && isPremium;
+          const shouldDowngradeWeeklyLock = assignmentMode === 'weeklyLock' && !isPremium;
+          const lockDurationDays = chore.lockDurationDays ?? 7;
+          const lockStartAt = chore.lockStartAt?.toDate
+            ? startOfDay(chore.lockStartAt.toDate())
+            : null;
+          const lockExpiresAt = lockStartAt ? addDays(lockStartAt, lockDurationDays) : null;
+          const lockExpired = weeklyLockEnabled && lockExpiresAt && lockExpiresAt <= today;
+          const eligibleMembersRaw =
+            chore.eligibleAssignees && chore.eligibleAssignees.length
+              ? orderedMembers.filter((memberId) =>
+                  chore.eligibleAssignees?.includes(memberId)
+                )
+              : orderedMembers;
+          const eligibleMembers = eligibleMembersRaw.length
+            ? eligibleMembersRaw
+            : orderedMembers;
+
+          const shouldAssign =
+            isDue &&
+            !chore.assignedTo &&
+            (!weeklyLockEnabled || !chore.assignedTo);
+
+          let targetAssignee = chore.assignedTo;
+
+          if (weeklyLockEnabled) {
+            if (!targetAssignee) {
+              targetAssignee = this.pickFairAssigneeFromList(
+                eligibleMembers,
                 pointsMap,
                 assignmentLoad,
-                chore.lastCompletedBy ?? null,
+                null,
                 lastCompletedMap
-              )
-            : chore.assignedTo;
+              );
+            } else if (lockExpired) {
+              const excludeUser =
+                avoidRepeat && eligibleMembers.length > 1 ? targetAssignee : null;
+              targetAssignee = this.pickFairAssigneeFromList(
+                eligibleMembers,
+                pointsMap,
+                assignmentLoad,
+                excludeUser,
+                lastCompletedMap
+              );
+            }
+          } else if (shouldAssign) {
+            targetAssignee = this.pickFairAssigneeFromList(
+              eligibleMembers,
+              pointsMap,
+              assignmentLoad,
+              chore.lastCompletedBy ?? null,
+              lastCompletedMap
+            );
+          }
 
           const nextDueAt =
             chore.nextDueAt ?? (dueDate ? Timestamp.fromDate(dueDate) : null);
 
           const nextStatus = isDue ? 'pending' : chore.status;
 
+          const shouldMarkMissed =
+            chore.frequency === 'daily' &&
+            isDue &&
+            nextStatus === 'pending' &&
+            dueDate &&
+            dueDate < today;
+          const lastMissedAt = chore.lastMissedAt?.toDate
+            ? startOfDay(chore.lastMissedAt.toDate())
+            : null;
+          const missedDays = shouldMarkMissed
+            ? Math.max(
+                0,
+                Math.floor((today.getTime() - dueDate.getTime()) / (24 * 60 * 60 * 1000))
+              )
+            : 0;
+          const shouldIncrementMissed =
+            missedDays > 0 && (!lastMissedAt || lastMissedAt.getTime() !== today.getTime());
+
           if (
             targetAssignee !== chore.assignedTo ||
             nextStatus !== chore.status ||
-            (nextDueAt && !chore.nextDueAt)
+            (nextDueAt && !chore.nextDueAt) ||
+            shouldIncrementMissed ||
+            (weeklyLockEnabled && (!lockStartAt || lockExpired))
           ) {
             const choreRef = doc(db, 'houses', houseId, 'chores', chore.choreId);
-            batch.update(choreRef, {
+            const lockStartPayload =
+              weeklyLockEnabled && (!lockStartAt || lockExpired)
+                ? Timestamp.fromDate(startOfDay(new Date()))
+                : chore.lockStartAt ?? null;
+
+            const patch: any = {
               assignedTo: targetAssignee ?? null,
               status: nextStatus,
               nextDueAt: nextDueAt ?? null,
               updatedAt: serverTimestamp(),
-            });
+            };
+
+            if (weeklyLockEnabled) {
+              patch.lockStartAt = lockStartPayload;
+              patch.lockDurationDays = lockDurationDays;
+            }
+            if (shouldDowngradeWeeklyLock) {
+              patch.assignmentMode = 'fair';
+              patch.lockStartAt = null;
+              patch.lockDurationDays = null;
+            }
+
+            if (shouldIncrementMissed) {
+              patch.missedCount = increment(missedDays);
+              patch.lastMissedAt = serverTimestamp();
+              patch.nextDueAt = Timestamp.fromDate(today);
+            }
+
+            batch.update(choreRef, patch);
             updates += 1;
           }
 
-          if (shouldAssign) {
+          if (shouldAssign || (weeklyLockEnabled && targetAssignee !== chore.assignedTo)) {
             const chorePoints = Number.isFinite(chore.points) ? chore.points : 0;
             const wasCounted =
               !!chore.assignedTo && isPendingStatus(chore.status);
@@ -803,19 +951,25 @@ import {
       const chores = await this.getHouseChores(houseId);
       const assignmentLoad = buildAssignmentLoad(chores);
       const lastCompletedMap = buildLastCompletedMap(chores);
+      const choreRef = doc(db, 'houses', houseId, 'chores', choreId);
+      const choreDoc = await getDoc(choreRef);
+      if (!choreDoc.exists()) return;
+      const chore = choreDoc.data() as ChoreData;
+
+      const eligibleMembersRaw =
+        chore.eligibleAssignees && chore.eligibleAssignees.length
+          ? members.filter((memberId) => chore.eligibleAssignees?.includes(memberId))
+          : members;
+      const eligibleMembers = eligibleMembersRaw.length ? eligibleMembersRaw : members;
+
       const target = this.pickFairAssigneeFromList(
-        members,
+        eligibleMembers,
         pointsMap,
         assignmentLoad,
         options?.excludeUserId ?? null,
         lastCompletedMap
       );
       if (!target) return;
-
-      const choreRef = doc(db, 'houses', houseId, 'chores', choreId);
-      const choreDoc = await getDoc(choreRef);
-      if (!choreDoc.exists()) return;
-      const chore = choreDoc.data() as ChoreData;
       if (chore.assignedTo === target) return;
 
       await updateDoc(choreRef, {

@@ -1,7 +1,10 @@
 import { useColorScheme } from '@/components/useColorScheme';
-import { appColors, AppTheme } from '@/constants/AppColors';
+import { appThemes, AppTheme, defaultThemeName } from '@/constants/AppColors';
+import { useThemePreference } from '@/contexts/ThemeContext';
 
 export const useAppTheme = (): AppTheme => {
   const scheme = useColorScheme();
-  return appColors[scheme === 'dark' ? 'dark' : 'light'];
+  const { themeName } = useThemePreference();
+  const activeTheme = appThemes[themeName] ?? appThemes[defaultThemeName];
+  return activeTheme[scheme === 'dark' ? 'dark' : 'light'];
 };

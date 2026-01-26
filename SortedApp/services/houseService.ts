@@ -37,6 +37,7 @@ import {
       updatedAt?: any;
     };
     choreWeights: Record<string, number>; // { "Scrub Toilet": 10, "Take out bins": 2 }
+    choreRotationAvoidRepeat?: boolean;
     createdAt: any;
     updatedAt: any;
   }
@@ -189,6 +190,7 @@ import {
             createdBy: userId,
             isPremium: false,
             choreWeights: {}, // Empty initially, can be customized later
+            choreRotationAvoidRepeat: true,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           };
@@ -507,6 +509,39 @@ import {
         );
       }
     }
+
+    /**
+     * Update house-level preferences
+     */
+    async updateHousePreferences(
+      houseId: string,
+      userId: string,
+      preferences: {
+        choreRotationAvoidRepeat?: boolean;
+      }
+    ): Promise<void> {
+      try {
+        if (!houseId || !userId) {
+          throw this.createError(
+            HouseServiceErrorCode.TRANSACTION_FAILED,
+            'House ID and user ID are required'
+          );
+        }
+
+        await this.verifyUserInHouse(userId, houseId);
+
+        await updateDoc(doc(db, 'houses', houseId), {
+          ...preferences,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (error) {
+        throw this.createError(
+          HouseServiceErrorCode.UNKNOWN_ERROR,
+          'Failed to update house preferences.',
+          error
+        );
+      }
+    }
   
     /**
      * Create a HouseServiceError
@@ -523,6 +558,25 @@ import {
       originalError?: any
     ): HouseServiceError {
       return { code, message, originalError };
+    }
+
+    private async verifyUserInHouse(userId: string, houseId: string): Promise<void> {
+      const houseDoc = await getDoc(doc(db, 'houses', houseId));
+
+      if (!houseDoc.exists()) {
+        throw this.createError(
+          HouseServiceErrorCode.HOUSE_NOT_FOUND,
+          'House not found.'
+        );
+      }
+
+      const members = (houseDoc.data().members || []) as string[];
+      if (!members.includes(userId)) {
+        throw this.createError(
+          HouseServiceErrorCode.NOT_IN_HOUSE,
+          'You are not a member of this house.'
+        );
+      }
     }
   
     /**
