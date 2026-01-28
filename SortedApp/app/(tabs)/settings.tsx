@@ -35,6 +35,9 @@ import choreService from '@/services/choreService';
 import financeService from '@/services/financeService';
 import calendarService from '@/services/calendarService';
 import { Image } from 'expo-image';
+import ProfileOverviewModal, {
+  ProfileOverviewUser,
+} from '@/components/ProfileOverviewModal';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '@/api/firebase';
 
@@ -77,8 +80,17 @@ export default function SettingsScreen() {
   const [houseNameInput, setHouseNameInput] = useState('');
   const [houseNameSaving, setHouseNameSaving] = useState(false);
   const [members, setMembers] = useState<
-    Array<{ userId: string; name: string; photoUrl?: string | null }>
+    Array<{
+      userId: string;
+      name: string;
+      photoUrl?: string | null;
+      email?: string | null;
+      totalPoints?: number;
+      createdAt?: any;
+    }>
   >([]);
+  const [memberProfileVisible, setMemberProfileVisible] = useState(false);
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!houseId) {
@@ -119,6 +131,9 @@ export default function SettingsScreen() {
             userId: doc.id,
             name: data.name || 'Unnamed',
             photoUrl: data.photoUrl || data.photoURL || null,
+            email: data.email || null,
+            totalPoints: typeof data.totalPoints === 'number' ? data.totalPoints : 0,
+            createdAt: data.createdAt || null,
           };
         });
         setMembers(nextMembers);
@@ -137,6 +152,38 @@ export default function SettingsScreen() {
   }, [houseData?.name]);
 
   const currentPhotoUrl = photoPreview || userProfile?.photoUrl || null;
+
+  const openMemberProfile = (userId: string) => {
+    setSelectedMemberId(userId);
+    setMemberProfileVisible(true);
+  };
+
+  const selectedMemberProfile = useMemo<ProfileOverviewUser | null>(() => {
+    if (!selectedMemberId) return null;
+    const member = members.find((entry) => entry.userId === selectedMemberId);
+    if (!member) return null;
+    const joinedDate =
+      member.createdAt?.toDate?.() instanceof Date
+        ? member.createdAt.toDate().toLocaleDateString(undefined, {
+            month: 'short',
+            year: 'numeric',
+          })
+        : null;
+    const stats = [
+      typeof member.totalPoints === 'number'
+        ? { label: 'Points', value: `${Math.round(member.totalPoints)}` }
+        : null,
+      joinedDate ? { label: 'Member since', value: joinedDate } : null,
+    ].filter(Boolean) as Array<{ label: string; value: string }>;
+    return {
+      userId: member.userId,
+      name: member.name,
+      photoUrl: member.photoUrl ?? null,
+      email: member.email ?? null,
+      subtitle: 'Housemate',
+      stats,
+    };
+  }, [selectedMemberId, members]);
 
   const handleOpenProfile = () => {
     setNameInput(userProfile?.name || '');
@@ -624,7 +671,11 @@ export default function SettingsScreen() {
                   <Text style={styles.helperText}>No members found.</Text>
                 ) : (
                   members.map((member) => (
-                    <RNView key={member.userId} style={styles.memberChip}>
+                    <TouchableOpacity
+                      key={member.userId}
+                      style={styles.memberChip}
+                      onPress={() => openMemberProfile(member.userId)}
+                    >
                       {member.photoUrl ? (
                         <Image
                           source={{ uri: member.photoUrl }}
@@ -643,7 +694,7 @@ export default function SettingsScreen() {
                       <Text style={styles.memberNameText}>
                         {getFirstName(member.name, 'Housemate')}
                       </Text>
-                    </RNView>
+                    </TouchableOpacity>
                   ))
                 )}
               </RNView>
@@ -1033,6 +1084,12 @@ export default function SettingsScreen() {
         </RNView>
       </Animated.ScrollView>
 
+      <ProfileOverviewModal
+        visible={memberProfileVisible}
+        user={selectedMemberProfile}
+        onClose={() => setMemberProfileVisible(false)}
+      />
+
     <Animated.View
       pointerEvents="none"
       style={[
@@ -1122,25 +1179,25 @@ const createStyles = (colors: AppTheme) =>
     marginBottom: 12,
   },
   avatarWrapper: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 16,
+    marginRight: 12,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: colors.border,
   },
   avatarImage: {
-    width: 64,
-    height: 64,
+    width: 70,
+    height: 70,
   },
   avatarPlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accentSoft,
@@ -1312,30 +1369,30 @@ const createStyles = (colors: AppTheme) =>
   memberChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     borderRadius: 999,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
   },
   memberAvatar: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    marginRight: 6,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    marginRight: 8,
   },
   memberAvatarFallback: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    marginRight: 6,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    marginRight: 8,
     backgroundColor: colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
   memberAvatarText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: colors.accent,
   },

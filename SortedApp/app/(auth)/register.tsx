@@ -44,12 +44,18 @@ export default function RegisterScreen() {
       return false;
     }
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    const trimmedPassword = password.trim();
+    if (trimmedPassword.length < 8) {
+      setError('Password must be at least 8 characters');
       return false;
     }
 
-    if (password !== confirmPassword) {
+    if (!/[A-Za-z]/.test(trimmedPassword) || !/\d/.test(trimmedPassword)) {
+      setError('Password must include at least one letter and one number');
+      return false;
+    }
+
+    if (trimmedPassword !== confirmPassword) {
       setError('Passwords do not match');
       return false;
     }

@@ -36,6 +36,7 @@ import { AppTheme } from '@/constants/AppColors';
 import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFirstName } from '@/utils/name';
+import ExpandableTitle from '@/components/ExpandableTitle';
 
 const BORDER_RADIUS = 16;
 const UPCOMING_DAYS = 30;
@@ -468,7 +469,7 @@ export default function CalendarScreen() {
     return (
       <RNView style={styles.eventCard}>
         <RNView style={styles.eventHeader}>
-          <Text style={styles.eventTitle}>{item.event.title}</Text>
+          <ExpandableTitle text={item.event.title} style={styles.eventTitle} />
           <Text style={styles.eventDate}>{formattedDate}</Text>
         </RNView>
         {!!item.event.description && (

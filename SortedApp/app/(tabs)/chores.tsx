@@ -45,6 +45,10 @@ import notificationService from '@/services/notificationService';
 import { Image } from 'expo-image';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import ExpandableTitle from '@/components/ExpandableTitle';
+import ProfileOverviewModal, {
+  ProfileOverviewUser,
+} from '@/components/ProfileOverviewModal';
 
 const BORDER_RADIUS = 16;
 
@@ -54,7 +58,11 @@ type StatusFilter = 'active' | 'upcoming' | 'history';
 interface MemberOption {
   userId: string;
   name: string;
+  fullName?: string | null;
   photoUrl?: string | null;
+  email?: string | null;
+  totalPoints?: number;
+  createdAt?: any;
 }
 
 interface FairnessMemberStat {
@@ -223,12 +231,17 @@ export default function ChoresScreen() {
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [membersLoading, setMembersLoading] = useState(true);
   const [isPremiumHouse, setIsPremiumHouse] = useState(false);
+  const [profileVisible, setProfileVisible] = useState(false);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
   const [fairnessLoading, setFairnessLoading] = useState(false);
   const [averagePoints, setAveragePoints] = useState<number | null>(null);
   const [memberStats, setMemberStats] = useState<FairnessMemberStat[]>([]);
   const [fairnessWindowDays, setFairnessWindowDays] = useState<number | null>(null);
   const [fairnessExpanded, setFairnessExpanded] = useState(false);
+  const [activeFairnessUserId, setActiveFairnessUserId] = useState<string | null>(
+    null
+  );
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
   const [sortByPointsDesc, setSortByPointsDesc] = useState(true);
@@ -326,7 +339,11 @@ export default function ChoresScreen() {
           return {
             userId: doc.id,
             name: getFirstName(data.name || 'Unnamed', 'Unnamed'),
+            fullName: data.name || null,
             photoUrl: data.photoUrl || data.photoURL || null,
+            email: data.email || null,
+            totalPoints: typeof data.totalPoints === 'number' ? data.totalPoints : 0,
+            createdAt: data.createdAt || null,
           };
         });
         setMembers(loadedMembers);
@@ -757,6 +774,34 @@ export default function ChoresScreen() {
     return map;
   }, [members]);
 
+  const memberEmailMap = useMemo(() => {
+    const map = new Map<string, string | null>();
+    members.forEach((member) => {
+      map.set(member.userId, member.email ?? null);
+    });
+    return map;
+  }, [members]);
+
+  const memberPointsMap = useMemo(() => {
+    const map = new Map<string, number>();
+    members.forEach((member) => {
+      if (typeof member.totalPoints === 'number') {
+        map.set(member.userId, member.totalPoints);
+      }
+    });
+    return map;
+  }, [members]);
+
+  const memberCreatedMap = useMemo(() => {
+    const map = new Map<string, any>();
+    members.forEach((member) => {
+      if (member.createdAt) {
+        map.set(member.userId, member.createdAt);
+      }
+    });
+    return map;
+  }, [members]);
+
   const memberColorMap = useMemo(() => {
     const map = new Map<string, string>();
     const orderedMembers = [...members].sort((a, b) => a.userId.localeCompare(b.userId));
@@ -778,6 +823,40 @@ export default function ChoresScreen() {
 
     return map;
   }, [members]);
+
+  const openProfileOverview = useCallback((userId: string) => {
+    setSelectedProfileId(userId);
+    setProfileVisible(true);
+  }, []);
+
+  const selectedProfile = useMemo<ProfileOverviewUser | null>(() => {
+    if (!selectedProfileId) return null;
+    const member = members.find((entry) => entry.userId === selectedProfileId);
+    const name = member?.fullName || member?.name || 'Housemate';
+    const points = memberPointsMap.get(selectedProfileId);
+    const createdAt = memberCreatedMap.get(selectedProfileId);
+    const joinedDate =
+      createdAt?.toDate?.() instanceof Date
+        ? createdAt.toDate().toLocaleDateString(undefined, {
+            month: 'short',
+            year: 'numeric',
+          })
+        : null;
+    const stats = [
+      typeof points === 'number'
+        ? { label: 'Points', value: `${Math.round(points)}` }
+        : null,
+      joinedDate ? { label: 'Member since', value: joinedDate } : null,
+    ].filter(Boolean) as Array<{ label: string; value: string }>;
+    return {
+      userId: selectedProfileId,
+      name,
+      photoUrl: member?.photoUrl ?? null,
+      email: member?.email ?? null,
+      subtitle: 'Housemate',
+      stats,
+    };
+  }, [selectedProfileId, members, memberPointsMap, memberCreatedMap]);
 
   const pendingPointsMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -1064,15 +1143,14 @@ export default function ChoresScreen() {
             ]}
           >
             <RNView style={{ flex: 1 }}>
-              <Text
+              <ExpandableTitle
+                text={item.title}
                 style={[
                   styles.choreTitle,
                   isCompact && styles.choreTitleCompact,
                   !showDescription && styles.choreTitleNoDescription,
                 ]}
-              >
-                {item.title}
-              </Text>
+              />
               {showDescription && (
                 <Text
                   style={[
@@ -1100,14 +1178,24 @@ export default function ChoresScreen() {
                     isUnassigned && styles.assigneePillMuted,
                   ]}
                 >
-                  {assignedPhotoUrl ? (
-                    <Image
-                      source={{ uri: assignedPhotoUrl }}
-                      style={styles.assigneeAvatar}
-                      contentFit="cover"
-                      cachePolicy="disk"
-                      transition={150}
-                    />
+                  {item.assignedTo ? (
+                    <Pressable onPress={() => openProfileOverview(item.assignedTo!)}>
+                      {assignedPhotoUrl ? (
+                        <Image
+                          source={{ uri: assignedPhotoUrl }}
+                          style={styles.assigneeAvatar}
+                          contentFit="cover"
+                          cachePolicy="disk"
+                          transition={150}
+                        />
+                      ) : (
+                        <RNView
+                          style={[styles.assigneeAvatar, { backgroundColor: assignedColor }]}
+                        >
+                          <Text style={styles.assigneeAvatarText}>{assignedInitial}</Text>
+                        </RNView>
+                      )}
+                    </Pressable>
                   ) : (
                     <RNView style={[styles.assigneeAvatar, { backgroundColor: assignedColor }]}>
                       <Text style={styles.assigneeAvatarText}>{assignedInitial}</Text>
@@ -1356,12 +1444,13 @@ export default function ChoresScreen() {
               <Pressable
                 key={member.userId}
                 style={[styles.fairnessDot, dotStyle, { left: `${position}%` }]}
-                onPress={() => {
-                  Alert.alert(
-                    member.userName,
-                    `${member.totalPoints} pts - ${deviationLabel}`
-                  );
-                }}
+                delayLongPress={60}
+                onLongPress={() => setActiveFairnessUserId(member.userId)}
+                onPressOut={() =>
+                  setActiveFairnessUserId((current) =>
+                    current === member.userId ? null : current
+                  )
+                }
               >
                 {photoUrl ? (
                   <Image
@@ -1378,6 +1467,12 @@ export default function ChoresScreen() {
                     <Text style={styles.fairnessAvatarText}>
                       {getInitial(member.userName)}
                     </Text>
+                  </RNView>
+                )}
+                {activeFairnessUserId === member.userId && (
+                  <RNView style={styles.fairnessTooltip}>
+                    <Text style={styles.fairnessTooltipName}>{member.userName}</Text>
+                    <Text style={styles.fairnessTooltipValue}>{deviationLabel}</Text>
                   </RNView>
                 )}
                 {isCurrentUser && <RNView style={styles.fairnessYouBadge} />}
@@ -2103,6 +2198,12 @@ export default function ChoresScreen() {
         <Text style={styles.stickyHeaderTitle}>Chores</Text>
       </Animated.View>
 
+      <ProfileOverviewModal
+        visible={profileVisible}
+        user={selectedProfile}
+        onClose={() => setProfileVisible(false)}
+      />
+
       {renderModal()}
 
       {loading && (
@@ -2567,13 +2668,13 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   fairnessDot: {
     position: 'absolute',
     top: '50%',
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: -13,
-    transform: [{ translateY: -13 }],
+    marginLeft: -14,
+    transform: [{ translateY: -14 }],
   },
   fairnessDotPositive: {
     borderWidth: 2,
@@ -2594,9 +2695,9 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     elevation: 4,
   },
   fairnessAvatar: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -2616,6 +2717,38 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: colors.onAccent,
+  },
+  fairnessTooltip: {
+    position: 'absolute',
+    top: 34,
+    left: '50%',
+    transform: [{ translateX: -90 }],
+    minWidth: 180,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
+    zIndex: 2,
+  },
+  fairnessTooltipName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  fairnessTooltipValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text,
+    textAlign: 'center',
   },
   fairnessLegend: {
     flexDirection: 'row',
@@ -2702,16 +2835,16 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     alignItems: 'center',
   },
   fairnessDetailAvatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
   },
   fairnessDetailAvatarText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '700',
     color: colors.onAccent,
   },

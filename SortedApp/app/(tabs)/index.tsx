@@ -72,6 +72,9 @@ export default function DashboardScreen() {
 
   const [members, setMembers] = useState<Member[]>([]);
   const [fairnessData, setFairnessData] = useState<FairnessData | null>(null);
+  const [activeFairnessUserId, setActiveFairnessUserId] = useState<string | null>(
+    null
+  );
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [loadingFairness, setLoadingFairness] = useState(true);
   const [loadingChores, setLoadingChores] = useState(true);
@@ -320,6 +323,11 @@ export default function DashboardScreen() {
 
   const handleOpenAlfredModal = () => {
     setAlfredModalVisible(true);
+    if (unreadNotifications.length) {
+      unreadNotifications.forEach((notification) => {
+        markAsRead(notification.notificationId);
+      });
+    }
   };
 
   const handleNotificationPress = (notification: any) => {
@@ -350,26 +358,19 @@ export default function DashboardScreen() {
     }
   };
 
-  const hideToast = useCallback(
-    (markRead: boolean) => {
-      if (toastTimeoutRef.current) {
-        clearTimeout(toastTimeoutRef.current);
-        toastTimeoutRef.current = null;
-      }
-      const current = toastNotification;
-      Animated.timing(toastAnim.current, {
-        toValue: 0,
-        duration: 180,
-        useNativeDriver: true,
-      }).start(() => {
-        setToastNotification(null);
-        if (markRead && current?.notificationId) {
-          markAsRead(current.notificationId);
-        }
-      });
-    },
-    [markAsRead, toastNotification]
-  );
+  const hideToast = useCallback(() => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+    Animated.timing(toastAnim.current, {
+      toValue: 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start(() => {
+      setToastNotification(null);
+    });
+  }, []);
 
   const showToast = useCallback(
     (notification: any) => {
@@ -383,7 +384,7 @@ export default function DashboardScreen() {
         clearTimeout(toastTimeoutRef.current);
       }
       toastTimeoutRef.current = setTimeout(() => {
-        hideToast(false);
+        hideToast();
       }, 6000);
     },
     [hideToast]
@@ -439,9 +440,17 @@ export default function DashboardScreen() {
     const maxPoints = Math.max(...points);
     const spread = Math.max(1, maxPoints - minPoints);
     const padding = Math.max(3, spread * 0.2);
+    const rawMin = minPoints - padding;
+    const rawMax = maxPoints + padding;
+    let min = Math.floor(rawMin / 5) * 5;
+    let max = Math.ceil(rawMax / 5) * 5;
+    if (min === max) {
+      min -= 5;
+      max += 5;
+    }
     return {
-      min: minPoints - padding,
-      max: maxPoints + padding,
+      min,
+      max,
       average: fairnessData.averagePoints,
     };
   }, [fairnessData]);
@@ -707,23 +716,19 @@ export default function DashboardScreen() {
       })
       .filter(Boolean) as Array<{ event: CalendarEventData; occurrenceDate: Date }>;
 
-    const personal = occurrences.filter(
-      (item) => item.event.createdBy === currentUserId
-    );
-    const list = personal.length ? personal : occurrences;
-
-    if (!list.length) {
+    if (!occurrences.length) {
       return { item: null, count: 0, isPersonal: false };
     }
 
-    const sorted = [...list].sort(
+    const sorted = [...occurrences].sort(
       (a, b) => a.occurrenceDate.getTime() - b.occurrenceDate.getTime()
     );
+    const first = sorted[0];
 
     return {
-      item: sorted[0],
+      item: first,
       count: sorted.length - 1,
-      isPersonal: personal.length > 0,
+      isPersonal: !!currentUserId && first.event.createdBy === currentUserId,
     };
   }, [events, currentUserId]);
 
@@ -734,8 +739,9 @@ export default function DashboardScreen() {
     if (!nextToast) return;
     hasShownToastRef.current = true;
     markToastSeen(nextToast.notificationId);
+    markAsRead(nextToast.notificationId);
     showToast(nextToast);
-  }, [houseId, currentUserId, getNextUnreadToast, markToastSeen, showToast]);
+  }, [houseId, currentUserId, getNextUnreadToast, markToastSeen, markAsRead, showToast]);
 
   useEffect(() => {
     const handleAppState = (status: AppStateStatus) => {
@@ -969,6 +975,10 @@ export default function DashboardScreen() {
             )}
             {fairnessRange && (
               <>
+                <RNView style={styles.fairnessScaleLabels}>
+                  <Text style={styles.fairnessScaleLabel}>{Math.round(fairnessRange.min)}</Text>
+                  <Text style={styles.fairnessScaleLabel}>{Math.round(fairnessRange.max)}</Text>
+                </RNView>
                 <RNView style={styles.fairnessScale}>
                   <RNView style={styles.fairnessTrack} />
                   <RNView
@@ -987,19 +997,20 @@ export default function DashboardScreen() {
                       : styles.fairnessDotNegative;
                     const photoUrl = memberPhotoMap.get(member.userId) ?? null;
                     const fallbackColor = getFallbackColor(member.userId);
+                    const deviationText = `${member.deviation >= 0 ? '+' : ''}${Math.round(
+                      member.deviation
+                    )} vs avg`;
                     return (
                       <Pressable
                         key={member.userId}
                         style={[styles.fairnessDot, dotStyle, { left: `${position}%` }]}
-                        onPress={() => {
-                          const deviationText = `${member.deviation >= 0 ? '+' : ''}${Math.round(
-                            member.deviation
-                          )} vs avg`;
-                          Alert.alert(
-                            getFirstName(member.userName, 'User'),
-                            `${member.totalPoints} pts | ${deviationText}`
-                          );
-                        }}
+                        delayLongPress={120}
+                        onLongPress={() => setActiveFairnessUserId(member.userId)}
+                        onPressOut={() =>
+                          setActiveFairnessUserId((current) =>
+                            current === member.userId ? null : current
+                          )
+                        }
                       >
                         {photoUrl ? (
                           <Image
@@ -1021,14 +1032,23 @@ export default function DashboardScreen() {
                             </Text>
                           </RNView>
                         )}
+                        {activeFairnessUserId === member.userId && (
+                          <RNView style={styles.fairnessTooltip}>
+                            <Text style={styles.fairnessTooltipName}>
+                              {getFirstName(member.userName, 'User')}
+                            </Text>
+                            <Text style={styles.fairnessTooltipValue}>
+                              {deviationText}
+                            </Text>
+                          </RNView>
+                        )}
                       </Pressable>
                     );
                   })}
                 </RNView>
-                <RNView style={styles.fairnessLegend}>
-                  <Text style={styles.fairnessLegendText}>Behind</Text>
-                  <Text style={styles.fairnessLegendText}>Ahead</Text>
-                </RNView>
+                <Text style={styles.fairnessAverageValue}>
+                  Average: {Math.round(fairnessRange.average)} pts
+                </Text>
               </>
             )}
             <RNView style={styles.fairnessList}>
@@ -1148,7 +1168,7 @@ export default function DashboardScreen() {
           <RNView style={styles.toastCard}>
             <RNView style={styles.toastHeader}>
               <Text style={styles.toastTitle}>Alfred</Text>
-              <Pressable onPress={() => hideToast(false)}>
+              <Pressable onPress={hideToast}>
                 <Text style={styles.toastClose}>×</Text>
               </Pressable>
             </RNView>
@@ -1156,25 +1176,22 @@ export default function DashboardScreen() {
             <RNView style={styles.toastActions}>
               {toastNotification.type === 'BILL_CONTESTED' &&
                 toastNotification.metadata?.transactionId && (
-                  <Pressable
-                    style={styles.toastAction}
-                    onPress={() => {
-                      hideToast(true);
-                      router.push({
-                        pathname: '/(tabs)/finance',
-                        params: { focusTransactionId: toastNotification.metadata.transactionId },
-                      });
-                    }}
-                  >
+                    <Pressable
+                      style={styles.toastAction}
+                      onPress={() => {
+                        hideToast();
+                        router.push({
+                          pathname: '/(tabs)/finance',
+                          params: { focusTransactionId: toastNotification.metadata.transactionId },
+                        });
+                      }}
+                    >
                     <Text style={styles.toastActionText}>View</Text>
                   </Pressable>
                 )}
-              <Pressable
-                style={styles.toastAction}
-                onPress={() => hideToast(true)}
-              >
-                <Text style={styles.toastActionText}>Mark read</Text>
-              </Pressable>
+                <Pressable style={styles.toastAction} onPress={hideToast}>
+                  <Text style={styles.toastActionText}>Mark read</Text>
+                </Pressable>
             </RNView>
           </RNView>
         </Animated.View>
@@ -1438,23 +1455,23 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     alignItems: 'center',
   },
   profileAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    marginRight: 12,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    marginRight: 10,
   },
   profileAvatarFallback: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    marginRight: 12,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    marginRight: 10,
     backgroundColor: colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
   profileAvatarText: {
     color: colors.accent,
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
   },
   headerActions: {
@@ -1712,6 +1729,16 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 8,
   },
+  fairnessScaleLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  fairnessScaleLabel: {
+    fontSize: 11,
+    color: colors.muted,
+    fontWeight: '600',
+  },
   fairnessTrack: {
     height: 6,
     borderRadius: 999,
@@ -1726,11 +1753,11 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   fairnessDot: {
     position: 'absolute',
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     top: 6,
-    transform: [{ translateX: -12 }],
+    transform: [{ translateX: -13 }],
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1747,9 +1774,9 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     borderColor: colors.danger,
   },
   fairnessAvatar: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1757,17 +1784,48 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   fairnessAvatarText: {
     color: colors.onAccent,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '700',
   },
-  fairnessLegend: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
+  fairnessTooltip: {
+    position: 'absolute',
+    top: 40,
+    left: '50%',
+    transform: [{ translateX: -90 }],
+    minWidth: 180,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
+    zIndex: 2,
   },
-  fairnessLegendText: {
+  fairnessTooltipName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  fairnessTooltipValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text,
+    textAlign: 'center',
+  },
+  fairnessAverageValue: {
     fontSize: 12,
     color: colors.muted,
+    fontWeight: '600',
+    marginTop: 6,
+    marginBottom: 10,
+    textAlign: 'center',
   },
   fairnessList: {
     borderTopWidth: 1,

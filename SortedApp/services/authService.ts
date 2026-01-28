@@ -11,6 +11,7 @@
     AuthError,
     FacebookAuthProvider,
     GoogleAuthProvider,
+    fetchSignInMethodsForEmail,
     signInWithCredential,
     OAuthProvider,
   } from 'firebase/auth';
@@ -75,15 +76,29 @@
           throw new Error('Email, password, and name are required');
         }
         
-        if (password.length < 6) {
-          throw new Error('Password must be at least 6 characters');
+        const trimmedPassword = password.trim();
+        if (trimmedPassword.length < 8) {
+          throw new Error('Password must be at least 8 characters');
+        }
+        if (!/[A-Za-z]/.test(trimmedPassword) || !/\d/.test(trimmedPassword)) {
+          throw new Error('Password must include at least one letter and one number');
+        }
+  
+        const normalizedEmail = email.trim().toLowerCase();
+        const existingProviders = await fetchSignInMethodsForEmail(auth, normalizedEmail);
+        if (existingProviders.length > 0) {
+          const error: Partial<AuthError> = {
+            code: 'auth/email-already-in-use',
+            message: 'This email is already registered. Please sign in instead.',
+          };
+          throw error;
         }
   
         // Create Firebase Auth user
         const userCredential = await createUserWithEmailAndPassword(
           auth,
-          email.trim().toLowerCase(),
-          password
+          normalizedEmail,
+          trimmedPassword
         );
   
         // Update user profile with display name
@@ -150,6 +165,11 @@
   
         return userCredential;
       } catch (error) {
+        if ((error as AuthError)?.code === 'auth/account-exists-with-different-credential') {
+          const email = (error as any)?.customData?.email as string | undefined;
+          const methods = email ? await fetchSignInMethodsForEmail(auth, email) : [];
+          throw this.buildAccountExistsError(methods);
+        }
         throw this.handleAuthError(error);
       }
     }
@@ -177,6 +197,11 @@
 
         return userCredential;
       } catch (error) {
+        if ((error as AuthError)?.code === 'auth/account-exists-with-different-credential') {
+          const email = (error as any)?.customData?.email as string | undefined;
+          const methods = email ? await fetchSignInMethodsForEmail(auth, email) : [];
+          throw this.buildAccountExistsError(methods);
+        }
         throw this.handleAuthError(error);
       }
     }
@@ -211,6 +236,11 @@
   
         return userCredential;
       } catch (error) {
+        if ((error as AuthError)?.code === 'auth/account-exists-with-different-credential') {
+          const email = (error as any)?.customData?.email as string | undefined;
+          const methods = email ? await fetchSignInMethodsForEmail(auth, email) : [];
+          throw this.buildAccountExistsError(methods);
+        }
         throw this.handleAuthError(error);
       }
     }
@@ -318,12 +348,24 @@
           throw new Error('Email is required');
         }
 
-        await updateEmail(user, email.trim().toLowerCase());
+        const normalizedEmail = email.trim().toLowerCase();
+        if (user.email?.toLowerCase() !== normalizedEmail) {
+          const existingProviders = await fetchSignInMethodsForEmail(auth, normalizedEmail);
+          if (existingProviders.length > 0) {
+            const error: Partial<AuthError> = {
+              code: 'auth/email-already-in-use',
+              message: 'This email is already registered. Please use another email.',
+            };
+            throw error;
+          }
+        }
+
+        await updateEmail(user, normalizedEmail);
 
         await setDoc(
           doc(db, 'users', user.uid),
           {
-            email: email.trim().toLowerCase(),
+            email: normalizedEmail,
             updatedAt: serverTimestamp(),
           },
           { merge: true }
@@ -375,6 +417,21 @@
             return {
               code: authError.code,
               message: 'This email is already registered. Please sign in instead.',
+              originalError: authError,
+            };
+          
+          case 'auth/account-exists-with-different-credential':
+            return {
+              code: authError.code,
+              message:
+                'This email is already linked to another sign-in method. Please sign in with that method and link this provider in Settings.',
+              originalError: authError,
+            };
+
+          case 'auth/credential-already-in-use':
+            return {
+              code: authError.code,
+              message: 'This sign-in method is already linked to another account.',
               originalError: authError,
             };
           
@@ -452,6 +509,27 @@
         message: 'An unexpected error occurred. Please try again.',
       };
     }
+  }
+
+  private buildAccountExistsError(methods: string[]): AuthServiceError {
+    const pretty = methods
+      .map((method) => {
+        if (method === 'password') return 'email/password';
+        if (method === 'google.com') return 'Google';
+        if (method === 'facebook.com') return 'Facebook';
+        if (method === 'apple.com') return 'Apple';
+        return method;
+      })
+      .join(', ');
+
+    const suffix = pretty ? ` Try signing in with: ${pretty}.` : '';
+    return {
+      code: 'auth/account-exists-with-different-credential',
+      message:
+        'This email is already linked to another sign-in method.' +
+        suffix +
+        ' You can link providers later in Settings.',
+    };
   }
   
   // Export singleton instance

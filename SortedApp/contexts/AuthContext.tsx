@@ -9,6 +9,7 @@ import Constants from 'expo-constants';
 import { auth, db } from '../api/firebase';
 import { UserData } from '../services/authService';
 import premiumService from '../services/premiumService';
+import AppBootScreen from '../components/AppBootScreen';
 
 /**
  * Auth context value interface
@@ -276,8 +277,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Show nothing during initial load to prevent screen flash
    * Once we know auth state, show the appropriate screen
    */
-  if (loading && !initialNavigationDone) {
-    return null; // Or return a loading screen component
+  if (loading || !initialNavigationDone) {
+    return <AppBootScreen />;
   }
 
   return (
