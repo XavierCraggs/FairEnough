@@ -38,10 +38,10 @@ import { Image } from 'expo-image';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '@/api/firebase';
 
-const SUPPORT_EMAIL = 'support@sortedapp.app';
-const HELP_CENTER_URL = 'https://sortedapp.app/help';
-const PRIVACY_URL = 'https://sortedapp.app/privacy';
-const TERMS_URL = 'https://sortedapp.app/terms';
+const SUPPORT_EMAIL = 'support@fairenough.app';
+const HELP_CENTER_URL = 'https://fairenough.app/help';
+const PRIVACY_URL = 'https://fairenough.app/privacy';
+const TERMS_URL = 'https://fairenough.app/terms';
 const ADMIN_UIDS = ['kfimxeubPFR7kSyYtd2UZbmMAuC2'];
 
 export default function SettingsScreen() {

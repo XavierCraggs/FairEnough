@@ -1,16 +1,17 @@
 module.exports = {
   expo: {
-    name: "SortedApp",
-    slug: "SortedApp",
+    name: "FairEnough",
+    slug: "fairenough",
+    owner: "xavec",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
-    scheme: "sortedapp",
+    scheme: "fairenough",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     extra: {
       eas: {
-        projectId: "861c543b-b1c1-4820-99b1-7eb01b8472ad"
+        projectId: "89a5dd83-236d-4c21-97f5-18d6be13905d"
       },
       googleWebClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
       googleAndroidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
@@ -35,18 +36,19 @@ module.exports = {
     },
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.xavierc.sortedapp",
+      bundleIdentifier: "com.xavierc.fairenough",
       usesAppleSignIn: true,
       infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
         CFBundleAllowMixedLocalizations: true
-      }
+      },
     },
     android: {
       adaptiveIcon: {
         foregroundImage: "./assets/images/adaptive-icon.png",
         backgroundColor: "#ffffff"
       },
-      package: "com.xavierc.sortedapp",
+      package: "com.xavierc.fairenough",
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false
     },

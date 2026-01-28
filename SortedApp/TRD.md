@@ -1,7 +1,7 @@
-# Sorted - Technical Requirements and Roadmap
+# FairEnough - Technical Requirements and Roadmap
 
 ## Project Vision
-Sorted is a low-friction sharehouse management app that uses a neutral "AI Butler" (Alfred) to mediate chores and finances, reducing social friction through automation and anonymity.
+FairEnough is a low-friction sharehouse management app that uses a neutral "AI Butler" (Alfred) to mediate chores and finances, reducing social friction through automation and anonymity.
 
 ## 1) Architecture and Stack
 - Platform: React Native (Expo)

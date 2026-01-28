@@ -1,4 +1,4 @@
-# SortedApp - Current State and Roadmap
+# FairEnough - Current State and Roadmap
 
 This document summarizes what is implemented today (based on the codebase),
 what is partially implemented, and what remains planned. It is meant as a
@@ -183,4 +183,3 @@ Files:
    - Accessibility pass.
    - Loading/error state improvements.
    - More robust settings for theme & account.
-

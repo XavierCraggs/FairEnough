@@ -21,8 +21,8 @@ const ThemeContext = createContext<ThemeContextValue>({
   setThemeName: () => {},
 });
 
-const STORAGE_KEY = 'sorted_theme_preference';
-const THEME_KEY = 'sorted_theme_name';
+const STORAGE_KEY = 'fairenough_theme_preference';
+const THEME_KEY = 'fairenough_theme_name';
 
 export const ThemePreferenceProvider = ({ children }: { children: React.ReactNode }) => {
   const systemScheme = useSystemScheme();

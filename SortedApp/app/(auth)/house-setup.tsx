@@ -112,7 +112,7 @@ export default function HouseSetupScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.content} lightColor={colors.background} darkColor={colors.background}>
-          <Text style={styles.title}>Welcome to Sorted</Text>
+          <Text style={styles.title}>Welcome to FairEnough</Text>
           <Text style={styles.subtitle}>Let's get your house organized</Text>
 
           <View style={styles.buttonContainer}>

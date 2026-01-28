@@ -65,7 +65,7 @@ export default function AuthWelcomeScreen() {
       if (googleResponse?.type !== 'success') return;
       const idToken = googleResponse.params?.id_token;
       if (!idToken) {
-        Alert.alert('Sorted', 'Unable to sign in with Google right now.');
+        Alert.alert('FairEnough', 'Unable to sign in with Google right now.');
         return;
       }
 
@@ -75,7 +75,7 @@ export default function AuthWelcomeScreen() {
         await authService.signInWithGoogle(idToken);
       } catch (err) {
         const authError = err as AuthServiceError;
-        Alert.alert('Sorted', authError.message);
+        Alert.alert('FairEnough', authError.message);
       } finally {
         setAuthLoading(false);
         setAuthProvider(null);
@@ -90,7 +90,7 @@ export default function AuthWelcomeScreen() {
       if (facebookResponse?.type !== 'success') return;
       const accessToken = facebookResponse.params?.access_token;
       if (!accessToken) {
-        Alert.alert('Sorted', 'Unable to sign in with Facebook right now.');
+        Alert.alert('FairEnough', 'Unable to sign in with Facebook right now.');
         return;
       }
 
@@ -100,7 +100,7 @@ export default function AuthWelcomeScreen() {
         await authService.signInWithFacebook(accessToken);
       } catch (err) {
         const authError = err as AuthServiceError;
-        Alert.alert('Sorted', authError.message);
+        Alert.alert('FairEnough', authError.message);
       } finally {
         setAuthLoading(false);
         setAuthProvider(null);
@@ -134,7 +134,7 @@ export default function AuthWelcomeScreen() {
 
   const handleApplePress = async () => {
     if (!appleAvailable) {
-      Alert.alert('Sorted', 'Apple sign-in is not available on this device.');
+      Alert.alert('FairEnough', 'Apple sign-in is not available on this device.');
       return;
     }
 
@@ -156,7 +156,7 @@ export default function AuthWelcomeScreen() {
       });
 
       if (!credential.identityToken) {
-        Alert.alert('Sorted', 'Unable to sign in with Apple right now.');
+        Alert.alert('FairEnough', 'Unable to sign in with Apple right now.');
         return;
       }
 
@@ -166,7 +166,7 @@ export default function AuthWelcomeScreen() {
         return;
       }
       const authError = err as AuthServiceError;
-      Alert.alert('Sorted', authError?.message || 'Apple sign-in failed.');
+      Alert.alert('FairEnough', authError?.message || 'Apple sign-in failed.');
     } finally {
       setAuthLoading(false);
       setAuthProvider(null);
@@ -182,19 +182,19 @@ export default function AuthWelcomeScreen() {
       !!googleWebClientId || hasAndroidId || hasIosId || !!googleExpoClientId;
 
     if (!hasAnyId) {
-      Alert.alert('Sorted', 'Google sign-in is not configured yet.');
+      Alert.alert('FairEnough', 'Google sign-in is not configured yet.');
       return;
     }
     if (needsAndroidId && !hasAndroidId && !(isExpoGo && resolvedExpoClientId)) {
-      Alert.alert('Sorted', 'Missing Android Google client ID.');
+      Alert.alert('FairEnough', 'Missing Android Google client ID.');
       return;
     }
     if (needsIosId && !hasIosId && !(isExpoGo && resolvedExpoClientId)) {
-      Alert.alert('Sorted', 'Missing iOS Google client ID.');
+      Alert.alert('FairEnough', 'Missing iOS Google client ID.');
       return;
     }
     if (!googleRequest) {
-      Alert.alert('Sorted', 'Google sign-in is unavailable right now.');
+      Alert.alert('FairEnough', 'Google sign-in is unavailable right now.');
       return;
     }
     setAuthProvider('google');
@@ -203,11 +203,11 @@ export default function AuthWelcomeScreen() {
 
   const handleFacebookPress = async () => {
     if (!facebookAppId) {
-      Alert.alert('Sorted', 'Facebook sign-in needs an App ID first.');
+      Alert.alert('FairEnough', 'Facebook sign-in needs an App ID first.');
       return;
     }
     if (!facebookRequest) {
-      Alert.alert('Sorted', 'Facebook sign-in is unavailable right now.');
+      Alert.alert('FairEnough', 'Facebook sign-in is unavailable right now.');
       return;
     }
     setAuthProvider('facebook');
@@ -222,7 +222,7 @@ export default function AuthWelcomeScreen() {
 
       <Text style={styles.title}>Let's get started!</Text>
       <Text style={styles.subtitle}>
-        Sorted keeps sharehouse chores and bills calm, fair, and simple.
+        FairEnough keeps sharehouse chores and bills calm, fair, and simple.
       </Text>
 
       <View style={styles.socialGroup}>
@@ -289,7 +289,7 @@ export default function AuthWelcomeScreen() {
       </TouchableOpacity>
 
       <Text style={styles.termsText}>
-        By continuing, you agree to Sorted's Privacy Policy and Terms.
+        By continuing, you agree to FairEnough's Privacy Policy and Terms.
       </Text>
     </ScrollView>
   );
