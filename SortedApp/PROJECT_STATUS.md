@@ -183,3 +183,11 @@ Files:
    - Accessibility pass.
    - Loading/error state improvements.
    - More robust settings for theme & account.
+
+5) **Test Feedback**
+   - Multiple house support (premium only)
+   - Allow repeat button on cho     re roation doesnt work
+   - Light purple theme (or more in general)
+   - Selectable profiles in setting (show email and details)
+   - General house to-do list
+   - log in with apple (user not found - was able to update details afterwards to fix account should have just not been able to login or get to join house screen if no user details)

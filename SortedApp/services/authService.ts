@@ -375,6 +375,27 @@
       }
     }
   
+    private buildAccountExistsError(methods: string[]): AuthServiceError {
+      const pretty = methods
+        .map((method) => {
+          if (method === 'password') return 'email/password';
+          if (method === 'google.com') return 'Google';
+          if (method === 'facebook.com') return 'Facebook';
+          if (method === 'apple.com') return 'Apple';
+          return method;
+        })
+        .join(', ');
+
+      const suffix = pretty ? ` Try signing in with: ${pretty}.` : '';
+      return {
+        code: 'auth/account-exists-with-different-credential',
+        message:
+          'This email is already linked to another sign-in method.' +
+          suffix +
+          ' You can link providers later in Settings.',
+      };
+    }
+
     /**
      * Create initial user document in Firestore
      * Called automatically after successful registration
@@ -511,26 +532,5 @@
     }
   }
 
-  private buildAccountExistsError(methods: string[]): AuthServiceError {
-    const pretty = methods
-      .map((method) => {
-        if (method === 'password') return 'email/password';
-        if (method === 'google.com') return 'Google';
-        if (method === 'facebook.com') return 'Facebook';
-        if (method === 'apple.com') return 'Apple';
-        return method;
-      })
-      .join(', ');
-
-    const suffix = pretty ? ` Try signing in with: ${pretty}.` : '';
-    return {
-      code: 'auth/account-exists-with-different-credential',
-      message:
-        'This email is already linked to another sign-in method.' +
-        suffix +
-        ' You can link providers later in Settings.',
-    };
-  }
-  
   // Export singleton instance
   export default new AuthService();
