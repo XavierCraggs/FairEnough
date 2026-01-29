@@ -54,7 +54,7 @@ interface FairnessData {
 }
 
 export default function DashboardScreen() {
-  const { userProfile, user } = useAuth();
+  const { userProfile, user, activeHouseId } = useAuth();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -67,7 +67,7 @@ export default function DashboardScreen() {
   });
   const hasShownToastRef = useRef(false);
   const userName = getFirstName(userProfile?.name || 'User', 'User');
-  const houseId = userProfile?.houseId;
+  const houseId = activeHouseId;
   const currentUserId = user?.uid;
 
   const [members, setMembers] = useState<Member[]>([]);

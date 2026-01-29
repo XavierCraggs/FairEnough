@@ -30,10 +30,6 @@ import { useThemePreference } from '@/contexts/ThemeContext';
 import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFirstName } from '@/utils/name';
-import notificationService from '@/services/notificationService';
-import choreService from '@/services/choreService';
-import financeService from '@/services/financeService';
-import calendarService from '@/services/calendarService';
 import { Image } from 'expo-image';
 import ProfileOverviewModal, {
   ProfileOverviewUser,
@@ -45,11 +41,10 @@ const SUPPORT_EMAIL = 'support@fairenough.app';
 const HELP_CENTER_URL = 'https://fairenough.app/help';
 const PRIVACY_URL = 'https://fairenough.app/privacy';
 const TERMS_URL = 'https://fairenough.app/terms';
-const ADMIN_UIDS = ['kfimxeubPFR7kSyYtd2UZbmMAuC2'];
 
 export default function SettingsScreen() {
-  const { userProfile } = useAuth();
-  const houseId = userProfile?.houseId ?? null;
+  const { userProfile, activeHouseId, isAdmin, isAdminHouseView } = useAuth();
+  const houseId = activeHouseId ?? null;
   const currentUserId = userProfile?.uid ?? null;
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -62,7 +57,6 @@ export default function SettingsScreen() {
     extrapolate: 'clamp',
   });
   const { preference, setPreference, themeName, setThemeName } = useThemePreference();
-  const isAdmin = !!currentUserId && ADMIN_UIDS.includes(currentUserId);
 
   const [loading, setLoading] = useState(false);
   const [houseData, setHouseData] = useState<HouseData | null>(null);
@@ -262,6 +256,10 @@ export default function SettingsScreen() {
   };
 
   const handleLeaveHouse = async () => {
+    if (isAdminHouseView) {
+      Alert.alert('Leave house', 'Switch back to your own house to leave it.');
+      return;
+    }
     if (!houseId || !userProfile?.uid) {
       return;
     }
@@ -337,6 +335,10 @@ export default function SettingsScreen() {
   };
 
   const handleUpgrade = async () => {
+    if (isAdminHouseView) {
+      Alert.alert('Premium', 'Switch back to your house to manage subscriptions.');
+      return;
+    }
     if (!houseId || !userProfile?.uid) {
       Alert.alert('Premium', 'Join a house before upgrading.');
       return;
@@ -358,6 +360,10 @@ export default function SettingsScreen() {
   };
 
   const handleRestore = async () => {
+    if (isAdminHouseView) {
+      Alert.alert('Premium', 'Switch back to your house to manage subscriptions.');
+      return;
+    }
     if (!houseId || !userProfile?.uid) {
       Alert.alert('Premium', 'Join a house before restoring purchases.');
       return;
@@ -379,6 +385,10 @@ export default function SettingsScreen() {
   };
 
   const handleManage = async () => {
+    if (isAdminHouseView) {
+      Alert.alert('Premium', 'Switch back to your house to manage subscriptions.');
+      return;
+    }
     try {
       await premiumService.openManageSubscriptions();
     } catch (error: any) {
@@ -434,6 +444,41 @@ export default function SettingsScreen() {
       await houseService.updateHousePreferences(houseId, currentUserId, {
         choreRotationAvoidRepeat: value,
       });
+      setHouseData((prev) =>
+        prev
+          ? {
+              ...prev,
+              choreRotationAvoidRepeat: value,
+            }
+          : prev
+      );
+    } catch (error: any) {
+      Alert.alert('Settings', error?.message || 'Unable to update chore settings.');
+    } finally {
+      setPreferencesSaving(false);
+    }
+  };
+
+  const handleUpdateChoreDensity = async (value: 'comfortable' | 'compact') => {
+    if (!houseId || !currentUserId) {
+      return;
+    }
+    if (preferencesSaving) {
+      return;
+    }
+    setPreferencesSaving(true);
+    try {
+      await houseService.updateHousePreferences(houseId, currentUserId, {
+        choreDensity: value,
+      });
+      setHouseData((prev) =>
+        prev
+          ? {
+              ...prev,
+              choreDensity: value,
+            }
+          : prev
+      );
     } catch (error: any) {
       Alert.alert('Settings', error?.message || 'Unable to update chore settings.');
     } finally {
@@ -449,91 +494,8 @@ export default function SettingsScreen() {
       : 'House Pass is active.'
     : 'Unlock calendar sync, receipt OCR, and advanced analytics for your house.';
   const avoidRepeat = houseData?.choreRotationAvoidRepeat !== false;
+  const choreDensity = houseData?.choreDensity === 'compact' ? 'compact' : 'comfortable';
 
-  const handleSendTestNotification = async (type: string) => {
-    if (!houseId || !currentUserId) return;
-    try {
-      const metadata =
-        type === 'BILL_ADDED'
-          ? { amount: 24.5, description: 'Test bill' }
-          : type === 'BILL_CONTESTED'
-          ? { reason: 'Amount looks wrong', transactionId: 'test' }
-          : type === 'CHORE_DUE'
-          ? { choreName: 'Test chore', action: 'overdue' }
-          : type === 'MEETING_REQUEST'
-          ? { subject: 'a quick house check-in' }
-          : { subject: 'test notification' };
-
-      await notificationService.sendAlfredNudge(
-        houseId,
-        currentUserId,
-        type as any,
-        metadata
-      );
-      Alert.alert('Admin', 'Test notification sent.');
-    } catch (error: any) {
-      Alert.alert('Admin', error?.message || 'Unable to send notification.');
-    }
-  };
-
-  const handleCreateTestBill = async () => {
-    if (!houseId || !currentUserId) return;
-    try {
-      const splitWith = houseData?.members?.length
-        ? houseData.members
-        : [currentUserId];
-      await financeService.addTransaction(
-        houseId,
-        currentUserId,
-        42.5,
-        'Test bill',
-        splitWith
-      );
-      Alert.alert('Admin', 'Test bill created.');
-    } catch (error: any) {
-      Alert.alert('Admin', error?.message || 'Unable to create test bill.');
-    }
-  };
-
-  const handleCreateTestChore = async () => {
-    if (!houseId || !currentUserId) return;
-    try {
-      await choreService.addChore({
-        houseId,
-        title: 'Test chore',
-        description: 'Admin seeded chore',
-        points: 4,
-        assignedTo: currentUserId,
-        frequency: 'weekly',
-        createdBy: currentUserId,
-      });
-      Alert.alert('Admin', 'Test chore created.');
-    } catch (error: any) {
-      Alert.alert('Admin', error?.message || 'Unable to create test chore.');
-    }
-  };
-
-  const handleCreateTestEvent = async () => {
-    if (!houseId || !currentUserId) return;
-    try {
-      const startDate = new Date();
-      await calendarService.addEvent(
-        houseId,
-        currentUserId,
-        'Test event',
-        startDate,
-        'Admin seeded event',
-        {
-          frequency: 'none',
-          interval: 1,
-          endDate: null,
-        }
-      );
-      Alert.alert('Admin', 'Test event created.');
-    } catch (error: any) {
-      Alert.alert('Admin', error?.message || 'Unable to create test event.');
-    }
-  };
 
   return (
     <ScreenShell style={styles.container}>
@@ -709,10 +671,10 @@ export default function SettingsScreen() {
                   </Text>
                 </RNView>
               </RNView>
-              <RNView style={styles.toggleGroup}>
-                {[true, false].map((value) => {
-                  const isActive = avoidRepeat === value;
-                  return (
+                <RNView style={styles.toggleGroup}>
+                  {[true, false].map((value) => {
+                    const isActive = avoidRepeat === value;
+                    return (
                     <TouchableOpacity
                       key={value ? 'avoid' : 'allow'}
                       style={[
@@ -731,9 +693,47 @@ export default function SettingsScreen() {
                         {value ? 'Avoid repeats' : 'Allow repeats'}
                       </Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </RNView>
+                    );
+                  })}
+                </RNView>
+                <RNView style={[styles.settingRow, styles.settingRowTight]}>
+                  <RNView style={styles.settingIcon}>
+                    <FontAwesome name="list" size={16} color={colors.accent} />
+                  </RNView>
+                  <RNView style={styles.settingBody}>
+                    <Text style={styles.settingLabel}>Chore layout</Text>
+                    <Text style={styles.helperText}>
+                      Choose a compact or comfortable view for chores.
+                    </Text>
+                  </RNView>
+                </RNView>
+                <RNView style={styles.toggleGroup}>
+                  {(['comfortable', 'compact'] as Array<'comfortable' | 'compact'>).map(
+                    (value) => {
+                      const isActive = choreDensity === value;
+                      return (
+                        <TouchableOpacity
+                          key={value}
+                          style={[
+                            styles.toggleChip,
+                            isActive && styles.toggleChipActive,
+                          ]}
+                          onPress={() => handleUpdateChoreDensity(value)}
+                          disabled={preferencesSaving}
+                        >
+                          <Text
+                            style={[
+                              styles.toggleChipText,
+                              isActive && styles.toggleChipTextActive,
+                            ]}
+                          >
+                            {value === 'comfortable' ? 'Comfortable' : 'Compact'}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    }
+                  )}
+                </RNView>
             </>
           ) : (
             <Text style={styles.description}>House details are unavailable right now.</Text>
@@ -922,39 +922,22 @@ export default function SettingsScreen() {
 
         {isAdmin && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Admin Tools</Text>
+            <Text style={styles.sectionTitle}>Admin</Text>
             <Text style={styles.description}>
-              Send test notifications or seed demo data for this house.
+              Switch between houses and access admin-only tools.
             </Text>
+            {isAdminHouseView && (
+              <RNView style={styles.adminNotice}>
+                <Text style={styles.adminNoticeText}>
+                  Admin view is active for another house.
+                </Text>
+              </RNView>
+            )}
             <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() =>
-                Alert.alert('Send test notification', 'Choose a type', [
-                  { text: 'Bill added', onPress: () => handleSendTestNotification('BILL_ADDED') },
-                  {
-                    text: 'Bill contested',
-                    onPress: () => handleSendTestNotification('BILL_CONTESTED'),
-                  },
-                  { text: 'Chore due', onPress: () => handleSendTestNotification('CHORE_DUE') },
-                  {
-                    text: 'Meeting request',
-                    onPress: () => handleSendTestNotification('MEETING_REQUEST'),
-                  },
-                  { text: 'Nudge', onPress: () => handleSendTestNotification('NUDGE') },
-                  { text: 'Cancel', style: 'cancel' },
-                ])
-              }
+              style={styles.primaryButton}
+              onPress={() => router.push('/(tabs)/admin')}
             >
-              <Text style={styles.secondaryButtonText}>Send test notification</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handleCreateTestBill}>
-              <Text style={styles.secondaryButtonText}>Create test bill</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handleCreateTestChore}>
-              <Text style={styles.secondaryButtonText}>Create test chore</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handleCreateTestEvent}>
-              <Text style={styles.secondaryButtonText}>Create test event</Text>
+              <Text style={styles.primaryButtonText}>Open admin panel</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -1281,6 +1264,20 @@ const createStyles = (colors: AppTheme) =>
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
+  },
+  adminNotice: {
+    marginTop: 10,
+    backgroundColor: colors.accentSoft,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  adminNoticeText: {
+    fontSize: 12,
+    color: colors.accent,
+    fontWeight: '600',
   },
   toggleGroup: {
     flexDirection: 'row',

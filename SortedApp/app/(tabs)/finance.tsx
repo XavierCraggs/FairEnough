@@ -66,7 +66,7 @@ interface MemberOption {
 }
 
 export default function FinanceScreen() {
-  const { user, userProfile } = useAuth();
+  const { user, userProfile, activeHouseId } = useAuth();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -79,7 +79,7 @@ export default function FinanceScreen() {
     outputRange: [0, 0.92],
     extrapolate: 'clamp',
   });
-  const houseId = userProfile?.houseId ?? null;
+  const houseId = activeHouseId ?? null;
   const currentUserId = user?.uid ?? null;
 
   const [transactions, setTransactions] = useState<TransactionData[]>([]);
@@ -1509,24 +1509,27 @@ export default function FinanceScreen() {
               <TouchableOpacity
                 style={styles.confirmButton}
                 onPress={() => handleConfirmTransaction(item)}
+                accessibilityLabel="Confirm payment"
               >
-                <Text style={styles.confirmButtonText}>Confirm</Text>
+                <FontAwesome name="check" size={14} color={colors.onAccent} />
               </TouchableOpacity>
             )}
             {isPayer && !isConfirmed && (
               <TouchableOpacity
                 style={styles.editButton}
                 onPress={() => openEditModal(item)}
+                accessibilityLabel="Edit expense"
               >
-                <Text style={styles.editButtonText}>Edit</Text>
+                <FontAwesome name="pencil" size={13} color={colors.accent} />
               </TouchableOpacity>
             )}
             {isPayer && !isConfirmed ? (
               <TouchableOpacity
                 style={styles.deleteButton}
                 onPress={() => handleDeleteTransaction(item)}
+                accessibilityLabel="Delete expense"
               >
-                <Text style={styles.deleteButtonText}>Delete</Text>
+                <FontAwesome name="trash" size={13} color={colors.danger} />
               </TouchableOpacity>
             ) : !isConfirmed && !hasUserConfirmed ? (
               <TouchableOpacity
@@ -1536,15 +1539,13 @@ export default function FinanceScreen() {
                 ]}
                 onPress={() => openContestModal(item)}
                 disabled={hasUserContested}
+                accessibilityLabel={hasUserContested ? 'Contested' : 'Contest expense'}
               >
-                <Text
-                  style={[
-                    styles.contestButtonText,
-                    hasUserContested && styles.contestButtonTextDisabled,
-                  ]}
-                >
-                  {hasUserContested ? 'Contested' : 'Contest'}
-                </Text>
+                <FontAwesome
+                  name={hasUserContested ? 'exclamation-circle' : 'flag'}
+                  size={13}
+                  color={hasUserContested ? colors.muted : colors.warning}
+                />
               </TouchableOpacity>
             ) : null}
           </RNView>
@@ -2794,55 +2795,40 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   confirmButton: {
     backgroundColor: colors.success,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 8,
-  },
-  confirmButtonText: {
-    color: colors.onAccent,
-    fontSize: 12,
-    fontWeight: '600',
   },
   deleteButton: {
     backgroundColor: colors.dangerSoft,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  deleteButtonText: {
-    color: colors.danger,
-    fontSize: 12,
-    fontWeight: '600',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   contestButton: {
     backgroundColor: colors.warningSoft,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   contestButtonDisabled: {
     opacity: 0.6,
   },
-  contestButtonText: {
-    color: colors.warning,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  contestButtonTextDisabled: {
-    color: colors.muted,
-  },
   editButton: {
     backgroundColor: colors.accentSoft,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 8,
-  },
-  editButtonText: {
-    color: colors.accent,
-    fontSize: 12,
-    fontWeight: '600',
   },
   emptyStateContainer: {
     alignItems: 'center',

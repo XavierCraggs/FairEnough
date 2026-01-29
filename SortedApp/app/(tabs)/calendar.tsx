@@ -93,7 +93,7 @@ const MONTH_LABELS = [
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function CalendarScreen() {
-  const { user, userProfile } = useAuth();
+  const { user, userProfile, activeHouseId } = useAuth();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -103,7 +103,7 @@ export default function CalendarScreen() {
     outputRange: [0, 0.92],
     extrapolate: 'clamp',
   });
-  const houseId = userProfile?.houseId ?? null;
+  const houseId = activeHouseId ?? null;
   const currentUserId = user?.uid ?? null;
 
   const [events, setEvents] = useState<CalendarEventData[]>([]);

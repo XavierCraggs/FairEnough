@@ -30,17 +30,18 @@
   /**
    * User data structure stored in Firestore
    */
-  export interface UserData {
-    uid: string;
-    email: string;
-    name: string;
-    houseId: string | null;
-    totalPoints: number;
-    photoUrl?: string | null;
-    phone?: string | null;
-    createdAt: any;
-    updatedAt: any;
-  }
+export interface UserData {
+  uid: string;
+  email: string;
+  name: string;
+  houseId: string | null;
+  totalPoints: number;
+  photoUrl?: string | null;
+  phone?: string | null;
+  profileIncomplete?: boolean;
+  createdAt: any;
+  updatedAt: any;
+}
   
   /**
    * Authentication service for handling user auth operations
@@ -413,6 +414,7 @@
         totalPoints: 0,
         photoUrl: user.photoURL || null,
         phone: user.phoneNumber || null,
+        profileIncomplete: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };

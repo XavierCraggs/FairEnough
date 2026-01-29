@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import Purchases from 'react-native-purchases';
 
 const isSupportedPlatform = Platform.OS === 'ios' || Platform.OS === 'android';
+const isExpoGo = Constants.appOwnership === 'expo';
 
 const getApiKey = () => {
   if (Platform.OS === 'ios') {
@@ -28,7 +29,7 @@ let configuredForHouse: string | null = null;
 let isConfigured = false;
 
 const ensureConfigured = async (houseId: string) => {
-  if (!isSupportedPlatform) {
+  if (!isSupportedPlatform || isExpoGo) {
     return;
   }
 
@@ -65,6 +66,9 @@ const premiumService = {
   housePassSku: HOUSE_PASS_SKU,
 
   async syncHouse(context: PremiumContext) {
+    if (isExpoGo) {
+      return null;
+    }
     await ensureConfigured(context.houseId);
     await syncAttributes(context);
     return Purchases.getCustomerInfo();
@@ -73,6 +77,9 @@ const premiumService = {
   async purchaseHousePass(context: PremiumContext) {
     if (!isSupportedPlatform) {
       throw new Error('Purchases are only supported on iOS and Android.');
+    }
+    if (isExpoGo) {
+      throw new Error('Purchases are unavailable in Expo Go. Use a dev build or TestFlight.');
     }
 
     await ensureConfigured(context.houseId);
@@ -100,6 +107,9 @@ const premiumService = {
     if (!isSupportedPlatform) {
       throw new Error('Purchases are only supported on iOS and Android.');
     }
+    if (isExpoGo) {
+      throw new Error('Purchases are unavailable in Expo Go. Use a dev build or TestFlight.');
+    }
 
     await ensureConfigured(context.houseId);
     await syncAttributes(context);
@@ -107,7 +117,7 @@ const premiumService = {
   },
 
   async openManageSubscriptions() {
-    if (!isSupportedPlatform) {
+    if (!isSupportedPlatform || isExpoGo) {
       return;
     }
 

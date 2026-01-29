@@ -1,15 +1,17 @@
 // contexts/AuthContext.tsx
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useRouter, useSegments } from 'expo-router';
 import { Alert } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db } from '../api/firebase';
 import { UserData } from '../services/authService';
 import premiumService from '../services/premiumService';
 import AppBootScreen from '../components/AppBootScreen';
+import { ADMIN_UIDS } from '../constants/admin';
 
 /**
  * Auth context value interface
@@ -17,6 +19,11 @@ import AppBootScreen from '../components/AppBootScreen';
 interface AuthContextValue {
   user: User | null;
   userProfile: UserData | null;
+  activeHouseId: string | null;
+  isAdmin: boolean;
+  isAdminHouseView: boolean;
+  adminHouseOverride: string | null;
+  setAdminHouseOverride: (houseId: string | null) => void;
   loading: boolean;
   isAuthenticated: boolean;
 }
@@ -27,6 +34,11 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue>({
   user: null,
   userProfile: null,
+  activeHouseId: null,
+  isAdmin: false,
+  isAdminHouseView: false,
+  adminHouseOverride: null,
+  setAdminHouseOverride: () => {},
   loading: true,
   isAuthenticated: false,
 });
@@ -63,10 +75,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [initialNavigationDone, setInitialNavigationDone] = useState(false);
+  const [adminHouseOverride, setAdminHouseOverrideState] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const missingProfileAlerted = useRef(false);
+  const bootStartRef = useRef(Date.now());
+  const profileBootstrappingRef = useRef(false);
   
   const router = useRouter();
   const segments = useSegments();
+
+  const isAdmin = !!user?.uid && ADMIN_UIDS.includes(user.uid);
+  const activeHouseId = useMemo(() => {
+    if (isAdmin && adminHouseOverride) {
+      return adminHouseOverride;
+    }
+    return userProfile?.houseId ?? null;
+  }, [adminHouseOverride, isAdmin, userProfile?.houseId]);
+  const isAdminHouseView =
+    isAdmin &&
+    !!adminHouseOverride &&
+    adminHouseOverride !== (userProfile?.houseId ?? null);
+
+  const setAdminHouseOverride = (houseId: string | null) => {
+    setAdminHouseOverrideState(houseId);
+    if (houseId) {
+      AsyncStorage.setItem('admin_house_override', houseId).catch(() => undefined);
+    } else {
+      AsyncStorage.removeItem('admin_house_override').catch(() => undefined);
+    }
+  };
 
   /**
    * Listen to Firebase auth state changes
@@ -79,12 +116,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear profile if user logs out
       if (!firebaseUser) {
         setUserProfile(null);
+        setAdminHouseOverrideState(null);
+        AsyncStorage.removeItem('admin_house_override').catch(() => undefined);
         setLoading(false);
+        setProfileError(null);
+      } else {
+        setLoading(true);
+        setInitialNavigationDone(false);
+        setProfileError(null);
       }
     });
 
     return unsubscribeAuth;
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setAdminHouseOverrideState(null);
+      AsyncStorage.removeItem('admin_house_override').catch(() => undefined);
+      return;
+    }
+
+    AsyncStorage.getItem('admin_house_override')
+      .then((stored) => {
+        if (stored) {
+          setAdminHouseOverrideState(stored);
+        }
+      })
+      .catch(() => undefined);
+  }, [isAdmin]);
 
   /**
    * Listen to Firestore user profile changes
@@ -95,20 +155,80 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
+    const ensureUserProfile = async (firebaseUser: User) => {
+      const fallbackName =
+        firebaseUser.displayName?.trim() ||
+        (firebaseUser.email ? firebaseUser.email.split('@')[0] : 'User');
+      const profileIncomplete = !firebaseUser.displayName?.trim();
+      const userData: UserData = {
+        uid: firebaseUser.uid,
+        email: firebaseUser.email || '',
+        name: fallbackName || 'User',
+        houseId: null,
+        totalPoints: 0,
+        photoUrl: firebaseUser.photoURL || null,
+        phone: firebaseUser.phoneNumber || null,
+        profileIncomplete,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+
+      setUserProfile(userData);
+      try {
+        await setDoc(doc(db, 'users', firebaseUser.uid), userData, { merge: true });
+      } catch (error) {
+        console.error('Failed to create missing user profile:', error);
+      } finally {
+        profileBootstrappingRef.current = false;
+        setLoading(false);
+      }
+    };
+
     // Subscribe to user document for real-time updates
     const unsubscribeProfile = onSnapshot(
       doc(db, 'users', user.uid),
       (docSnapshot) => {
         if (docSnapshot.exists()) {
-          setUserProfile(docSnapshot.data() as UserData);
+          const profile = docSnapshot.data() as UserData;
+          const normalizedName = (profile.name || '').trim();
+          const needsProfile =
+            !normalizedName || normalizedName.toLowerCase() === 'user';
+
+          if (!needsProfile && profile.profileIncomplete) {
+            setUserProfile({ ...profile, profileIncomplete: false });
+            setDoc(
+              doc(db, 'users', user.uid),
+              { profileIncomplete: false, updatedAt: serverTimestamp() },
+              { merge: true }
+            ).catch((error) => {
+              console.error('Failed to clear incomplete profile flag:', error);
+            });
+          } else if (needsProfile && !profile.profileIncomplete) {
+            setUserProfile({ ...profile, profileIncomplete: true });
+            setDoc(
+              doc(db, 'users', user.uid),
+              { profileIncomplete: true, updatedAt: serverTimestamp() },
+              { merge: true }
+            ).catch((error) => {
+              console.error('Failed to flag incomplete profile:', error);
+            });
+          } else {
+            setUserProfile(profile);
+          }
+          setProfileError(null);
+          profileBootstrappingRef.current = false;
+          setLoading(false);
         } else {
-          console.warn('User profile document does not exist');
-          setUserProfile(null);
+          if (!profileBootstrappingRef.current) {
+            profileBootstrappingRef.current = true;
+            console.warn('User profile document does not exist; creating fallback profile.');
+            void ensureUserProfile(user);
+          }
         }
-        setLoading(false);
       },
       (error) => {
         console.error('Error fetching user profile:', error);
+        setProfileError(error?.message || 'Unable to load profile.');
         setLoading(false);
       }
     );
@@ -122,6 +242,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const registerForPushNotifications = async () => {
+      if (Constants.appOwnership === 'expo') {
+        return;
+      }
       try {
         const { status: existingStatus } = await Notifications.getPermissionsAsync();
         let finalStatus = existingStatus;
@@ -168,6 +291,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      if (Constants.appOwnership === 'expo') {
+        return;
+      }
+
       if (!userProfile.houseId) {
         await premiumService.reset();
         return;
@@ -207,6 +334,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const inAuthGroup = segments[0] === '(auth)';
     const inTabsGroup = segments[0] === '(tabs)';
     const onHouseSetup = segments[1] === 'house-setup';
+    const onCompleteProfile = segments[1] === 'complete-profile';
 
     /**
      * Navigation logic:
@@ -224,21 +352,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       router.replace('/(auth)');
       setInitialNavigationDone(true);
     } else if (user && userProfile === null) {
-      // User is signed in but profile is missing -> treat as logged out
-      if (!missingProfileAlerted.current) {
+      // Still loading or creating the profile; avoid redirect loops.
+      if (profileError && !missingProfileAlerted.current) {
         missingProfileAlerted.current = true;
-        Alert.alert(
-          'Account not found',
-          'We could not load your profile. Please sign in again.'
-        );
+        Alert.alert('Profile error', profileError);
       }
-      if (!inAuthGroup) {
-        router.replace('/(auth)');
-      }
-      setInitialNavigationDone(true);
+      return;
     } else if (user && userProfile !== null) {
       // User is logged in and profile is loaded
-      const hasHouse = userProfile.houseId !== null;
+      const hasHouse = !!userProfile.houseId;
+      const normalizedName = (userProfile.name || '').trim();
+      const needsProfile =
+        !normalizedName || normalizedName.toLowerCase() === 'user';
+
+      if (needsProfile) {
+        if (!onCompleteProfile) {
+          router.replace('/(auth)/complete-profile');
+        }
+        setInitialNavigationDone(true);
+        return;
+      }
 
       if (!hasHouse && !onHouseSetup) {
         // User has no house and not on house-setup -> redirect to house-setup
@@ -269,6 +402,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const value: AuthContextValue = {
     user,
     userProfile,
+    activeHouseId,
+    isAdmin,
+    isAdminHouseView,
+    adminHouseOverride,
+    setAdminHouseOverride,
     loading,
     isAuthenticated: !!user && !!userProfile,
   };

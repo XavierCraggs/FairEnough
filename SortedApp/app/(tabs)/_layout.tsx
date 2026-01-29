@@ -73,6 +73,15 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <TabBarIcon name="cog" color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="admin"
+        options={{
+          href: null,
+          title: 'Admin',
+          headerShown: false,
+          tabBarButton: () => null,
+        }}
+      />
     </Tabs>
   );
 }

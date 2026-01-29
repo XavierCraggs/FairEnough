@@ -14,6 +14,10 @@ export default function ButlerTabBar({ state, descriptors, navigation }: BottomT
   const colors = useAppTheme();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const visibleRoutes = state.routes.filter((route) => {
+    const options = descriptors[route.key]?.options;
+    return options?.href !== null && options?.tabBarButton !== null;
+  });
 
   return (
     <View
@@ -24,9 +28,9 @@ export default function ButlerTabBar({ state, descriptors, navigation }: BottomT
       ]}
     >
       <View style={styles.bar}>
-        {state.routes.map((route, index) => {
+        {visibleRoutes.map((route) => {
           const { options } = descriptors[route.key];
-          const focused = state.index === index;
+          const focused = state.index === state.routes.indexOf(route);
           const isCenter = route.name === 'index';
           const iconColor = focused ? colors.accent : colors.tabInactive;
 

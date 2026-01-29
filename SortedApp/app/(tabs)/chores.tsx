@@ -24,8 +24,7 @@ import choreService, {
   ChoreServiceError,
   ROLLING_WINDOW_DAYS,
 } from '../../services/choreService';
-import houseService from '../../services/houseService';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../api/firebase';
 import Slider from '@react-native-community/slider';
 import {
@@ -210,7 +209,7 @@ const formatHistoryDate = (date: Date) => {
 };
 
 export default function ChoresScreen() {
-  const { user, userProfile } = useAuth();
+  const { user, userProfile, activeHouseId } = useAuth();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const colorScheme = useColorScheme();
@@ -221,7 +220,7 @@ export default function ChoresScreen() {
     outputRange: [0, 0.92],
     extrapolate: 'clamp',
   });
-  const houseId = userProfile?.houseId ?? null;
+  const houseId = activeHouseId ?? null;
   const currentUserId = user?.uid ?? null;
 
   const [chores, setChores] = useState<ChoreData[]>([]);
@@ -397,21 +396,23 @@ export default function ChoresScreen() {
       return;
     }
 
-    let isMounted = true;
-    houseService
-      .getHouse(houseId)
-      .then((house) => {
-        if (!isMounted) return;
-        setIsPremiumHouse(!!house?.isPremium);
-      })
-      .catch(() => {
-        if (!isMounted) return;
+    const unsubscribe = onSnapshot(
+      doc(db, 'houses', houseId),
+      (snapshot) => {
+        const data = snapshot.data() as any;
+        setIsPremiumHouse(!!data?.isPremium);
+        if (data?.choreDensity === 'compact') {
+          setDensityMode('compact');
+        } else {
+          setDensityMode('comfortable');
+        }
+      },
+      () => {
         setIsPremiumHouse(false);
-      });
+      }
+    );
 
-    return () => {
-      isMounted = false;
-    };
+    return () => unsubscribe();
   }, [houseId]);
 
   const loadFairness = useCallback(async () => {
@@ -1663,46 +1664,6 @@ export default function ChoresScreen() {
               : 'Points ↓'}
           </Text>
         </TouchableOpacity>
-        <RNView style={styles.densityToggle}>
-          <Pressable
-            style={[
-              styles.densityOption,
-              densityMode === 'comfortable' && styles.densityOptionActive,
-            ]}
-            onPress={() => {
-              selectionChanged();
-              setDensityMode('comfortable');
-            }}
-          >
-            <Text
-              style={[
-                styles.densityOptionText,
-                densityMode === 'comfortable' && styles.densityOptionTextActive,
-              ]}
-            >
-              Comfortable
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[
-              styles.densityOption,
-              densityMode === 'compact' && styles.densityOptionActive,
-            ]}
-            onPress={() => {
-              selectionChanged();
-              setDensityMode('compact');
-            }}
-          >
-            <Text
-              style={[
-                styles.densityOptionText,
-                densityMode === 'compact' && styles.densityOptionTextActive,
-              ]}
-            >
-              Compact
-            </Text>
-          </Pressable>
-        </RNView>
       </RNView>
     </RNView>
   );

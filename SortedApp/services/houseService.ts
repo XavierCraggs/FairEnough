@@ -19,11 +19,11 @@ import {
   /**
    * House data structure stored in Firestore
    */
-  export interface HouseData {
-    houseId: string;
-    name: string;
-    inviteCode: string;
-    members: string[]; // Array of user UIDs
+export interface HouseData {
+  houseId: string;
+  name: string;
+  inviteCode: string;
+  members: string[]; // Array of user UIDs
     createdBy: string; // UID of house creator
     isPremium: boolean;
     premium?: {
@@ -36,11 +36,12 @@ import {
       purchaserName?: string;
       updatedAt?: any;
     };
-    choreWeights: Record<string, number>; // { "Scrub Toilet": 10, "Take out bins": 2 }
-    choreRotationAvoidRepeat?: boolean;
-    createdAt: any;
-    updatedAt: any;
-  }
+  choreWeights: Record<string, number>; // { "Scrub Toilet": 10, "Take out bins": 2 }
+  choreRotationAvoidRepeat?: boolean;
+  choreDensity?: 'comfortable' | 'compact';
+  createdAt: any;
+  updatedAt: any;
+}
   
   /**
    * Invite code document structure
@@ -87,6 +88,32 @@ import {
    * Implements atomic transactions to prevent data inconsistencies
    */
   class HouseService {
+    /**
+     * Resolve a house ID from an invite code
+     * 
+     * @param inviteCode - House invite code
+     * @returns House ID or null if not found
+     */
+    async resolveHouseIdByInviteCode(inviteCode: string): Promise<string | null> {
+      try {
+        if (!inviteCode.trim()) {
+          return null;
+        }
+        const normalizedCode = inviteCode.trim().toUpperCase();
+        const inviteDoc = await getDoc(doc(db, 'inviteCodes', normalizedCode));
+        if (!inviteDoc.exists()) {
+          return null;
+        }
+        const data = inviteDoc.data() as InviteCodeData;
+        return data?.houseId || null;
+      } catch (error) {
+        throw this.createError(
+          HouseServiceErrorCode.UNKNOWN_ERROR,
+          'Failed to resolve invite code.',
+          error
+        );
+      }
+    }
     /**
      * Generate a random invite code
      * Format: 6 alphanumeric characters (e.g., "A7X2Z9")
@@ -191,6 +218,7 @@ import {
             isPremium: false,
             choreWeights: {}, // Empty initially, can be customized later
             choreRotationAvoidRepeat: true,
+            choreDensity: 'comfortable',
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           };
@@ -518,6 +546,7 @@ import {
       userId: string,
       preferences: {
         choreRotationAvoidRepeat?: boolean;
+        choreDensity?: 'comfortable' | 'compact';
       }
     ): Promise<void> {
       try {
