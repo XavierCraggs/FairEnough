@@ -14,8 +14,9 @@
     fetchSignInMethodsForEmail,
     signInWithCredential,
     OAuthProvider,
+    deleteUser,
   } from 'firebase/auth';
-  import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+  import { doc, setDoc, getDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
   import { auth, db } from '../api/firebase';
   
   /**
@@ -38,6 +39,8 @@ export interface UserData {
   totalPoints: number;
   photoUrl?: string | null;
   phone?: string | null;
+  onboardingIntent?: 'chores' | 'bills' | 'both';
+  onboardingStep?: 'quick-start' | null;
   profileIncomplete?: boolean;
   createdAt: any;
   updatedAt: any;
@@ -254,6 +257,25 @@ export interface UserData {
     async signOut(): Promise<void> {
       try {
         await signOut(auth);
+      } catch (error) {
+        throw this.handleAuthError(error);
+      }
+    }
+
+    /**
+     * Delete the current user's account and Firestore profile
+     * Best-effort cleanup for abandoned onboarding.
+     */
+    async deleteAccount(): Promise<void> {
+      const user = auth.currentUser;
+      if (!user) return;
+      try {
+        await deleteDoc(doc(db, 'users', user.uid));
+      } catch {
+        // ignore firestore cleanup failures
+      }
+      try {
+        await deleteUser(user);
       } catch (error) {
         throw this.handleAuthError(error);
       }

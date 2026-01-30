@@ -24,6 +24,8 @@ interface AuthContextValue {
   isAdminHouseView: boolean;
   adminHouseOverride: string | null;
   setAdminHouseOverride: (houseId: string | null) => void;
+  quickStartBypass: boolean;
+  setQuickStartBypass: (value: boolean) => void;
   loading: boolean;
   isAuthenticated: boolean;
 }
@@ -39,6 +41,8 @@ const AuthContext = createContext<AuthContextValue>({
   isAdminHouseView: false,
   adminHouseOverride: null,
   setAdminHouseOverride: () => {},
+  quickStartBypass: false,
+  setQuickStartBypass: () => {},
   loading: true,
   isAuthenticated: false,
 });
@@ -77,6 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [initialNavigationDone, setInitialNavigationDone] = useState(false);
   const [adminHouseOverride, setAdminHouseOverrideState] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [quickStartBypass, setQuickStartBypass] = useState(false);
   const missingProfileAlerted = useRef(false);
   const bootStartRef = useRef(Date.now());
   const profileBootstrappingRef = useRef(false);
@@ -334,6 +339,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const inAuthGroup = segments[0] === '(auth)';
     const inTabsGroup = segments[0] === '(tabs)';
     const onHouseSetup = segments[1] === 'house-setup';
+    const onHouseJoin = segments[1] === 'house-join';
+    const onHouseChoice = segments[1] === 'house-choice';
+    const onHouseCreate = segments[1] === 'house-create';
+    const onQuickStart = segments[1] === 'quick-start';
     const onCompleteProfile = segments[1] === 'complete-profile';
 
     /**
@@ -373,15 +382,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      if (!hasHouse && !onHouseSetup) {
-        // User has no house and not on house-setup -> redirect to house-setup
-        router.replace('/(auth)/house-setup');
+      if (userProfile.onboardingStep === 'quick-start' && !quickStartBypass) {
+        if (!onQuickStart) {
+          router.replace('/(auth)/quick-start');
+        }
         setInitialNavigationDone(true);
-      } else if (hasHouse && (onHouseSetup || inAuthGroup)) {
-        // User has house but on auth screens -> redirect to main app
+        return;
+      }
+
+      if (
+        !hasHouse &&
+        !onHouseSetup &&
+        !onHouseChoice &&
+        !onHouseJoin &&
+        !onHouseCreate &&
+        !onCompleteProfile
+      ) {
+        router.replace('/(auth)/house-choice');
+        setInitialNavigationDone(true);
+        return;
+      }
+
+      if (hasHouse && inAuthGroup) {
         router.replace('/(tabs)/');
         setInitialNavigationDone(true);
-      } else if (!initialNavigationDone && hasHouse && !inTabsGroup) {
+        return;
+      }
+
+      if (!initialNavigationDone && hasHouse && !inTabsGroup) {
         // Initial load, user has house, not in tabs -> redirect to main app
         router.replace('/(tabs)/');
         setInitialNavigationDone(true);
@@ -407,6 +435,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isAdminHouseView,
     adminHouseOverride,
     setAdminHouseOverride,
+    quickStartBypass,
+    setQuickStartBypass,
     loading,
     isAuthenticated: !!user && !!userProfile,
   };

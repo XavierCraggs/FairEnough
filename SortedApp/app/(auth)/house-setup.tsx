@@ -15,18 +15,29 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useAuth } from '@/contexts/AuthContext';
 import houseService, { HouseServiceError, HouseServiceErrorCode } from '@/services/houseService';
 import { useAppTheme } from '@/hooks/useAppTheme';
+import { useLocalSearchParams } from 'expo-router';
 import { AppTheme } from '@/constants/AppColors';
 
 export default function HouseSetupScreen() {
   const { user, userProfile } = useAuth();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [joinModalVisible, setJoinModalVisible] = useState(false);
   const [houseName, setHouseName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (mode === 'join') {
+      setJoinModalVisible(true);
+    }
+    if (mode === 'create') {
+      setCreateModalVisible(true);
+    }
+  }, [mode]);
 
   const handleCreateHouse = async () => {
     if (!houseName.trim()) {

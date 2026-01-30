@@ -191,3 +191,6 @@ Files:
    - Selectable profiles in setting (show email and details)
    - General house to-do list
    - log in with apple (user not found - was able to update details afterwards to fix account should have just not been able to login or get to join house screen if no user details)
+
+6) **Onboarding Redesign (Drafted)**
+   - See `ONBOARDING_PLAN.md` for the new flow proposal (profile → house choice → join/create → quick start).

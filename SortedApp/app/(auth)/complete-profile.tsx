@@ -16,6 +16,7 @@ import { useAppTheme } from '@/hooks/useAppTheme';
 import { AppTheme } from '@/constants/AppColors';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '@/api/firebase';
+import { router } from 'expo-router';
 
 export default function CompleteProfileScreen() {
   const { user, userProfile } = useAuth();
@@ -23,6 +24,12 @@ export default function CompleteProfileScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [name, setName] = useState(userProfile?.name || '');
   const [saving, setSaving] = useState(false);
+  const [phoneInput, setPhoneInput] = useState(
+    userProfile?.phone || user?.phoneNumber || ''
+  );
+  const [intent, setIntent] = useState<'chores' | 'bills' | 'both'>(
+    userProfile?.onboardingIntent || 'both'
+  );
   const providerLabel = useMemo(() => {
     const providerId =
       user?.providerData?.find((provider) => provider.providerId !== 'firebase')?.providerId ||
@@ -62,6 +69,8 @@ export default function CompleteProfileScreen() {
         doc(db, 'users', user.uid),
         {
           profileIncomplete: false,
+          phone: phoneInput.trim() || null,
+          onboardingIntent: intent,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -70,6 +79,20 @@ export default function CompleteProfileScreen() {
       Alert.alert('Profile', error?.message || 'Unable to update profile.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleExitSetup = async () => {
+    try {
+      if (!userProfile?.houseId) {
+        await authService.deleteAccount();
+      } else {
+        await authService.signOut();
+      }
+    } catch {
+      // ignore
+    } finally {
+      router.replace('/(auth)');
     }
   };
 
@@ -102,6 +125,39 @@ export default function CompleteProfileScreen() {
           editable={!saving}
         />
 
+        <Text style={styles.label}>Phone (optional)</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Phone number"
+          placeholderTextColor={colors.muted}
+          value={phoneInput}
+          onChangeText={setPhoneInput}
+          keyboardType="phone-pad"
+          autoComplete="tel"
+          editable={!saving}
+        />
+
+        <Text style={styles.label}>Use FairEnough for</Text>
+        <RNView style={styles.intentRow}>
+          {(['chores', 'bills', 'both'] as const).map((value) => {
+            const active = intent === value;
+            const label =
+              value === 'chores' ? 'Chores' : value === 'bills' ? 'Bills' : 'Both';
+            return (
+              <TouchableOpacity
+                key={value}
+                style={[styles.intentChip, active && styles.intentChipActive]}
+                onPress={() => setIntent(value)}
+                disabled={saving}
+              >
+                <Text style={[styles.intentText, active && styles.intentTextActive]}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </RNView>
+
         <TouchableOpacity
           style={[styles.primaryButton, saving && styles.buttonDisabled]}
           onPress={handleSave}
@@ -112,6 +168,14 @@ export default function CompleteProfileScreen() {
           ) : (
             <Text style={styles.primaryButtonText}>Save and continue</Text>
           )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.exitButton}
+          onPress={handleExitSetup}
+          disabled={saving}
+        >
+          <Text style={styles.exitButtonText}>Back to welcome</Text>
         </TouchableOpacity>
       </View>
       <RNView />
@@ -196,5 +260,40 @@ const createStyles = (colors: AppTheme) =>
     },
     buttonDisabled: {
       opacity: 0.6,
+    },
+    exitButton: {
+      marginTop: 16,
+      alignItems: 'center',
+    },
+    exitButtonText: {
+      fontSize: 13,
+      color: colors.muted,
+      textDecorationLine: 'underline',
+    },
+    intentRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 24,
+    },
+    intentChip: {
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    intentChipActive: {
+      backgroundColor: colors.accent,
+      borderColor: colors.accent,
+    },
+    intentText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.muted,
+    },
+    intentTextActive: {
+      color: colors.onAccent,
     },
   });

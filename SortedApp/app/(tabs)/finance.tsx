@@ -70,10 +70,12 @@ export default function FinanceScreen() {
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
-  const { focusTransactionId } = useLocalSearchParams<{
+  const { focusTransactionId, openCreate } = useLocalSearchParams<{
     focusTransactionId?: string;
+    openCreate?: string;
   }>();
   const scrollY = useRef(new Animated.Value(0));
+  const quickStartOpenedRef = useRef(false);
   const headerOpacity = scrollY.current.interpolate({
     inputRange: [0, 80],
     outputRange: [0, 0.92],
@@ -497,6 +499,13 @@ export default function FinanceScreen() {
     impactLight();
     setModalVisible(true);
   };
+
+  useEffect(() => {
+    if (openCreate !== '1') return;
+    if (quickStartOpenedRef.current) return;
+    quickStartOpenedRef.current = true;
+    openCreateModal();
+  }, [openCreate]);
 
   const openEditModal = (transaction: TransactionData) => {
     if (!currentUserId) {

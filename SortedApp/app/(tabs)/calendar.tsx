@@ -37,6 +37,7 @@ import ScreenShell from '@/components/ScreenShell';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFirstName } from '@/utils/name';
 import ExpandableTitle from '@/components/ExpandableTitle';
+import { useLocalSearchParams } from 'expo-router';
 
 const BORDER_RADIUS = 16;
 const UPCOMING_DAYS = 30;
@@ -94,10 +95,12 @@ const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function CalendarScreen() {
   const { user, userProfile, activeHouseId } = useAuth();
+  const { openCreate } = useLocalSearchParams<{ openCreate?: string }>();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0));
+  const quickStartOpenedRef = useRef(false);
   const headerOpacity = scrollY.current.interpolate({
     inputRange: [0, 80],
     outputRange: [0, 0.92],
@@ -179,6 +182,13 @@ export default function CalendarScreen() {
     impactLight();
     setModalVisible(true);
   };
+
+  useEffect(() => {
+    if (openCreate !== '1') return;
+    if (quickStartOpenedRef.current) return;
+    quickStartOpenedRef.current = true;
+    openCreateModal();
+  }, [openCreate]);
 
   const openEditModal = (event: CalendarEventData) => {
     if (!currentUserId) {

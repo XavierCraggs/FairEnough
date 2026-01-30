@@ -48,6 +48,7 @@ import ExpandableTitle from '@/components/ExpandableTitle';
 import ProfileOverviewModal, {
   ProfileOverviewUser,
 } from '@/components/ProfileOverviewModal';
+import { useLocalSearchParams } from 'expo-router';
 
 const BORDER_RADIUS = 16;
 
@@ -210,11 +211,13 @@ const formatHistoryDate = (date: Date) => {
 
 export default function ChoresScreen() {
   const { user, userProfile, activeHouseId } = useAuth();
+  const { openCreate } = useLocalSearchParams<{ openCreate?: string }>();
   const colors = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const colorScheme = useColorScheme();
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0));
+  const quickStartOpenedRef = useRef(false);
   const headerOpacity = scrollY.current.interpolate({
     inputRange: [0, 80],
     outputRange: [0, 0.92],
@@ -269,8 +272,6 @@ export default function ChoresScreen() {
   const [dueDateInput, setDueDateInput] = useState<Date>(startOfDay(new Date()));
   const [showDueDatePicker, setShowDueDatePicker] = useState(false);
 
-  // Simple 3-dot menu state per chore
-  const [openMenuChoreId, setOpenMenuChoreId] = useState<string | null>(null);
   const lastOverdueCheckRef = useRef<number>(0);
   const lastAutoAssignRef = useRef<number>(0);
 
@@ -464,6 +465,13 @@ export default function ChoresScreen() {
     setModalVisible(true);
   };
 
+  useEffect(() => {
+    if (openCreate !== '1') return;
+    if (quickStartOpenedRef.current) return;
+    quickStartOpenedRef.current = true;
+    openCreateModal();
+  }, [openCreate]);
+
   const openEditModal = (chore: ChoreData) => {
     setEditingChore(chore);
     setTitleInput(chore.title);
@@ -654,37 +662,6 @@ export default function ChoresScreen() {
         },
       ]
     );
-  };
-
-  const handleEndSeries = (chore: ChoreData) => {
-    if (!houseId || !user) return;
-    Alert.alert(
-      'End recurring chore',
-      `Stop repeating "${chore.title}" after the current cycle?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'End series',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await choreService.endChoreSeries(houseId, chore.choreId, user.uid);
-            } catch (err: any) {
-              handleError(err, 'Unable to end this chore series. Please try again.');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleReassignChore = async (chore: ChoreData, userId: string | null) => {
-    if (!houseId || !user) return;
-    try {
-      await choreService.assignChore(houseId, chore.choreId, userId, user.uid);
-    } catch (err: any) {
-      handleError(err, 'Unable to reassign chore. Please try again.');
-    }
   };
 
   const onRefresh = useCallback(async () => {
@@ -1081,7 +1058,7 @@ export default function ChoresScreen() {
           style={styles.missedReassignButton}
           onPress={() => openEditModal(chore)}
         >
-          <Text style={styles.missedReassignText}>Reassign</Text>
+          <Text style={styles.missedReassignText}>Edit</Text>
         </TouchableOpacity>
       </RNView>
     );
@@ -1120,21 +1097,10 @@ export default function ChoresScreen() {
     const isExpanded = !isCompact || expandedChoreIds.has(item.choreId);
     const showDescription = !!item.description && isExpanded;
     const isCompleted = item.status === 'completed';
-    const isRecurring = item.frequency !== 'one-time';
 
     return (
       <View style={[styles.choreCard, isCompact && styles.choreCardCompact]}>
-        <Pressable
-          style={styles.choreTapArea}
-          onPress={() => {
-            if (isCompleted || statusFilter === 'history') {
-              return;
-            }
-            setOpenMenuChoreId((current) =>
-              current === item.choreId ? null : item.choreId
-            );
-          }}
-        >
+          <Pressable style={styles.choreTapArea}>
           <RNView
             style={[
               styles.choreHeaderRow,
@@ -1283,64 +1249,26 @@ export default function ChoresScreen() {
           </TouchableOpacity>
         )}
 
-        {canComplete && (
-          <TouchableOpacity
-            style={[styles.completeButton, isCompact && styles.completeButtonCompact]}
-            onPress={() => handleCompleteChore(item)}
-          >
-            <Text style={styles.completeButtonText}>Complete</Text>
-          </TouchableOpacity>
-        )}
-
-        {openMenuChoreId === item.choreId && (
-          <RNView style={styles.menuContainer}>
-            {!isCompleted && (
-              <Pressable
-                style={styles.menuItem}
-                onPress={() => {
-                  setOpenMenuChoreId(null);
-                  openEditModal(item);
-                }}
-              >
-                <Text style={styles.menuItemText}>Edit</Text>
-              </Pressable>
-            )}
-            {!isCompleted && (
-              <Pressable
-                style={styles.menuItem}
-                onPress={() => {
-                  setOpenMenuChoreId(null);
-                  // Simple reassign cycle through members including Unassigned
-                  const allTargets: (string | null)[] = [
-                    null,
-                    ...members.map((m) => m.userId),
-                  ];
-                  const currentIndex = allTargets.indexOf(item.assignedTo ?? null);
-                  const nextIndex = (currentIndex + 1) % allTargets.length;
-                  handleReassignChore(item, allTargets[nextIndex]);
-                }}
-              >
-                <Text style={styles.menuItemText}>Reassign</Text>
-              </Pressable>
-            )}
-            {!isCompleted && isRecurring && (
-              <Pressable
-                style={styles.menuItem}
-                onPress={() => {
-                  setOpenMenuChoreId(null);
-                  handleEndSeries(item);
-                }}
-              >
-                <Text style={[styles.menuItemText, { color: colors.danger }]}>
-                  End series
-                </Text>
-              </Pressable>
-            )}
-            {!isCompleted && !isRecurring && (
-              null
-            )}
-          </RNView>
-        )}
+          {(canComplete || !isCompleted) && (
+            <RNView style={styles.completeRow}>
+              {canComplete && (
+                <TouchableOpacity
+                  style={[styles.completeButton, isCompact && styles.completeButtonCompact]}
+                  onPress={() => handleCompleteChore(item)}
+                >
+                  <Text style={styles.completeButtonText}>Complete</Text>
+                </TouchableOpacity>
+              )}
+              {!isCompleted && (
+                <Pressable
+                  style={styles.menuTrigger}
+                  onPress={() => openEditModal(item)}
+                >
+                  <FontAwesome name="ellipsis-h" size={16} color={colors.muted} />
+                </Pressable>
+              )}
+            </RNView>
+          )}
       </View>
     );
   };
@@ -1695,7 +1623,8 @@ export default function ChoresScreen() {
           style={styles.modalBackdrop}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-        <RNView style={styles.modalContent}>
+        <RNView style={styles.modalShell}>
+          <RNView style={[styles.modalContent, { paddingBottom: 28 + insets.bottom }]}>
           <ScrollView
             contentContainerStyle={styles.modalScrollContent}
             keyboardShouldPersistTaps="handled"
@@ -1708,10 +1637,92 @@ export default function ChoresScreen() {
                 Changes apply to future repeats only.
               </Text>
             )}
+            {editingChore && (
+              <RNView style={styles.instanceCard}>
+                <Text style={styles.sectionHeader}>Current instance</Text>
+                <Text style={styles.helperText}>
+                  Update who is responsible for the next occurrence.
+                </Text>
+                <Text style={styles.modalLabel}>Assigned to</Text>
+                <RNView style={styles.dropdownContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.dropdownChip,
+                      assignedToInput === null && styles.dropdownChipActive,
+                    ]}
+                    onPress={() => setAssignedToInput(null)}
+                  >
+                    <Text
+                      style={[
+                        styles.dropdownChipText,
+                        assignedToInput === null && styles.dropdownChipTextActive,
+                      ]}
+                    >
+                      Auto-assign
+                    </Text>
+                  </TouchableOpacity>
+                  {members.map((member) => (
+                    <TouchableOpacity
+                      key={member.userId}
+                      style={[
+                        styles.dropdownChip,
+                        assignedToInput === member.userId && styles.dropdownChipActive,
+                      ]}
+                      onPress={() => setAssignedToInput(member.userId)}
+                    >
+                      <Text
+                        style={[
+                          styles.dropdownChipText,
+                          assignedToInput === member.userId &&
+                            styles.dropdownChipTextActive,
+                        ]}
+                      >
+                        {getFirstName(member.name, 'Housemate')}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </RNView>
+
+                <Text style={styles.modalLabel}>
+                  {frequencyInput === 'one-time' ? 'Due date' : 'Next due date'}
+                </Text>
+                <Pressable
+                  style={styles.datePickerButton}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setShowDueDatePicker((prev) => !prev);
+                  }}
+                >
+                  <Text style={styles.datePickerText}>
+                    {formatReadableDate(dueDateInput)}
+                  </Text>
+                </Pressable>
+                {showDueDatePicker && (
+                  <RNView style={styles.datePickerShell}>
+                    <DateTimePicker
+                      value={dueDateInput}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                      themeVariant={
+                        colorScheme === 'dark' ? 'dark' : 'light'
+                      }
+                      onChange={(_, selectedDate) => {
+                        if (selectedDate) {
+                          setDueDateInput(startOfDay(selectedDate));
+                        }
+                      }}
+                    />
+                  </RNView>
+                )}
+              </RNView>
+            )}
             {!editingChore && renderStepIndicator()}
 
             {(editingChore || setupStep === 1) && (
               <>
+                {editingChore && (
+                  <Text style={styles.sectionHeader}>Series details</Text>
+                )}
                 {!editingChore && (
                   <>
                     <Text style={styles.modalLabel}>Templates</Text>
@@ -1841,41 +1852,45 @@ export default function ChoresScreen() {
                   </>
                 )}
 
-                <Text style={styles.modalLabel}>
-                  {frequencyInput === 'one-time' ? 'Due date' : 'First due date'}
-                </Text>
-                <Pressable
-                  style={styles.datePickerButton}
-                  onPress={() => {
-                    Keyboard.dismiss();
-                    setShowDueDatePicker((prev) => !prev);
-                  }}
-                >
-                  <Text style={styles.datePickerText}>
-                    {formatReadableDate(dueDateInput)}
-                  </Text>
-                </Pressable>
-                {showDueDatePicker && (
-                  <RNView style={styles.datePickerShell}>
-                    <DateTimePicker
-                      value={dueDateInput}
-                      mode="date"
-                      display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                      themeVariant={
-                        Platform.OS === 'ios'
-                          ? colorScheme === 'dark'
-                            ? 'dark'
-                            : 'light'
-                          : undefined
-                      }
-                      textColor={Platform.OS === 'ios' ? colors.accent : undefined}
-                      onChange={(_, date) => {
-                        if (date) {
-                          setDueDateInput(startOfDay(date));
-                        }
+                {!editingChore && (
+                  <>
+                    <Text style={styles.modalLabel}>
+                      {frequencyInput === 'one-time' ? 'Due date' : 'First due date'}
+                    </Text>
+                    <Pressable
+                      style={styles.datePickerButton}
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        setShowDueDatePicker((prev) => !prev);
                       }}
-                    />
-                  </RNView>
+                    >
+                      <Text style={styles.datePickerText}>
+                        {formatReadableDate(dueDateInput)}
+                      </Text>
+                    </Pressable>
+                    {showDueDatePicker && (
+                      <RNView style={styles.datePickerShell}>
+                        <DateTimePicker
+                          value={dueDateInput}
+                          mode="date"
+                          display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                          themeVariant={
+                            Platform.OS === 'ios'
+                              ? colorScheme === 'dark'
+                                ? 'dark'
+                                : 'light'
+                              : undefined
+                          }
+                          textColor={Platform.OS === 'ios' ? colors.accent : undefined}
+                          onChange={(_, date) => {
+                            if (date) {
+                              setDueDateInput(startOfDay(date));
+                            }
+                          }}
+                        />
+                      </RNView>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -1901,49 +1916,56 @@ export default function ChoresScreen() {
                   />
                 </RNView>
 
-                <Text style={styles.modalLabel}>Assign to</Text>
-                <RNView style={styles.dropdownContainer}>
-                  <TouchableOpacity
-                    style={[
-                      styles.dropdownChip,
-                      assignedToInput === null && styles.dropdownChipActive,
-                    ]}
-                    onPress={() => setAssignedToInput(null)}
-                  >
-                    <Text
-                      style={[
-                        styles.dropdownChipText,
-                        assignedToInput === null && styles.dropdownChipTextActive,
-                      ]}
-                    >
-                      Auto-assign
-                    </Text>
-                  </TouchableOpacity>
-                  {members.map((member) => (
-                    <TouchableOpacity
-                      key={member.userId}
-                      style={[
-                        styles.dropdownChip,
-                        assignedToInput === member.userId && styles.dropdownChipActive,
-                      ]}
-                      onPress={() => setAssignedToInput(member.userId)}
-                    >
-                      <Text
+                {!editingChore && (
+                  <>
+                    <Text style={styles.modalLabel}>Assign to</Text>
+                    <RNView style={styles.dropdownContainer}>
+                      <TouchableOpacity
                         style={[
-                          styles.dropdownChipText,
-                          assignedToInput === member.userId &&
-                            styles.dropdownChipTextActive,
+                          styles.dropdownChip,
+                          assignedToInput === null && styles.dropdownChipActive,
                         ]}
+                        onPress={() => setAssignedToInput(null)}
                       >
-                        {member.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </RNView>
+                        <Text
+                          style={[
+                            styles.dropdownChipText,
+                            assignedToInput === null && styles.dropdownChipTextActive,
+                          ]}
+                        >
+                          Auto-assign
+                        </Text>
+                      </TouchableOpacity>
+                      {members.map((member) => (
+                        <TouchableOpacity
+                          key={member.userId}
+                          style={[
+                            styles.dropdownChip,
+                            assignedToInput === member.userId &&
+                              styles.dropdownChipActive,
+                          ]}
+                          onPress={() => setAssignedToInput(member.userId)}
+                        >
+                          <Text
+                            style={[
+                              styles.dropdownChipText,
+                              assignedToInput === member.userId &&
+                                styles.dropdownChipTextActive,
+                            ]}
+                          >
+                            {member.name}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </RNView>
+                  </>
+                )}
                 <Text style={styles.modalLabel}>Eligible housemates</Text>
                 <RNView style={styles.dropdownContainer}>
                   {members.map((member) => {
-                    const isSelected = eligibleAssigneesInput.includes(member.userId);
+                    const isSelected = isPremiumHouse
+                      ? eligibleAssigneesInput.includes(member.userId)
+                      : true;
                     return (
                       <TouchableOpacity
                         key={member.userId}
@@ -1955,14 +1977,28 @@ export default function ChoresScreen() {
                         onPress={() => handleToggleEligible(member.userId)}
                         disabled={!isPremiumHouse}
                       >
-                        <Text
-                          style={[
-                            styles.dropdownChipText,
-                            isSelected && styles.dropdownChipTextActive,
-                          ]}
-                        >
-                          {getFirstName(member.name, 'Housemate')}
-                        </Text>
+                        <RNView style={styles.dropdownChipContent}>
+                          {isSelected && (
+                            <FontAwesome
+                              name="check"
+                              size={12}
+                              color={
+                                isSelected
+                                  ? styles.dropdownChipTextActive.color
+                                  : styles.dropdownChipText.color
+                              }
+                              style={styles.dropdownChipIcon}
+                            />
+                          )}
+                          <Text
+                            style={[
+                              styles.dropdownChipText,
+                              isSelected && styles.dropdownChipTextActive,
+                            ]}
+                          >
+                            {getFirstName(member.name, 'Housemate')}
+                          </Text>
+                        </RNView>
                       </TouchableOpacity>
                     );
                   })}
@@ -2078,8 +2114,9 @@ export default function ChoresScreen() {
                 </TouchableOpacity>
               )}
             </RNView>
-            </ScrollView>
+          </ScrollView>
           </RNView>
+        </RNView>
         </KeyboardAvoidingView>
       </TouchableWithoutFeedback>
     </Modal>
@@ -2438,21 +2475,37 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontWeight: '500',
   },
   completeButton: {
-    marginTop: 10,
     backgroundColor: colors.success,
     borderRadius: 999,
     paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    flex: 1,
   },
   completeButtonCompact: {
-    marginTop: 8,
     paddingVertical: 8,
   },
   completeButtonText: {
     color: colors.onAccent,
     fontWeight: '600',
     fontSize: 15,
+  },
+  completeRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  menuTrigger: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
   },
   nudgeInlineButton: {
     marginTop: 8,
@@ -2480,20 +2533,6 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   },
   choreTapArea: {
     width: '100%',
-  },
-  menuContainer: {
-    marginTop: 8,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-    overflow: 'hidden',
-  },
-  menuItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  menuItemText: {
-    fontSize: 14,
-    color: colors.accent,
   },
   emptyStateContainer: {
     alignItems: 'center',
@@ -3004,6 +3043,11 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
+  modalShell: {
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 12,
+  },
   modalContent: {
     backgroundColor: colors.card,
     borderTopLeftRadius: 24,
@@ -3019,6 +3063,20 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
     fontWeight: '600',
     color: colors.accent,
     marginBottom: 16,
+  },
+  sectionHeader: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.accent,
+    marginBottom: 4,
+  },
+  instanceCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+    marginBottom: 14,
   },
   modalSubtitle: {
     fontSize: 12,
@@ -3181,6 +3239,13 @@ const createStyles = (colors: AppTheme) => StyleSheet.create({
   dropdownChipTextActive: {
     color: colors.onAccent,
     fontWeight: '600',
+  },
+  dropdownChipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dropdownChipIcon: {
+    marginRight: 6,
   },
   premiumHelperRow: {
     flexDirection: 'row',

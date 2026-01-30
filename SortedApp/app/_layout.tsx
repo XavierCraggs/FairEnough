@@ -72,6 +72,10 @@ function RootLayoutNav() {
           <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
           <Stack.Screen name="(auth)/register" options={{ headerShown: false }} />
           <Stack.Screen name="(auth)/reset-password" options={{ headerShown: false }} />
+          <Stack.Screen name="(auth)/house-choice" options={{ headerShown: false }} />
+          <Stack.Screen name="(auth)/house-join" options={{ headerShown: false }} />
+          <Stack.Screen name="(auth)/house-create" options={{ headerShown: false }} />
+          <Stack.Screen name="(auth)/quick-start" options={{ headerShown: false }} />
           <Stack.Screen name="(auth)/house-setup" options={{ headerShown: false }} />
           <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
         </Stack>

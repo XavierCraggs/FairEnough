@@ -15,8 +15,20 @@ export default function ButlerTabBar({ state, descriptors, navigation }: BottomT
   const styles = React.useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const visibleRoutes = state.routes.filter((route) => {
+    if (route.name === 'admin') {
+      return false;
+    }
     const options = descriptors[route.key]?.options;
-    return options?.href !== null && options?.tabBarButton !== null;
+    if (options?.href === null) {
+      return false;
+    }
+    if (options?.tabBarButton === null) {
+      return false;
+    }
+    if (options?.tabBarItemStyle && options.tabBarItemStyle.display === 'none') {
+      return false;
+    }
+    return true;
   });
 
   return (

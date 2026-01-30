@@ -79,7 +79,6 @@ export default function TabLayout() {
           href: null,
           title: 'Admin',
           headerShown: false,
-          tabBarButton: () => null,
         }}
       />
     </Tabs>
